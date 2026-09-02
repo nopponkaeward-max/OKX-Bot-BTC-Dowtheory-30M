@@ -1,0 +1,74 @@
+# DowTheoryBreak — BTC-USDT-SWAP 30m — configuration
+# Every value mirrors a Pine input.  Secrets come from environment / .env,
+# never from this file.
+
+strategy:
+  # --- Swing Pattern ---
+  dow_swing_len: 3              # bars left-right for pivot swing detection
+
+  # --- Entry Strategy (Pullback %) ---
+  pullback_mode: "% of Range"   # "% of Range" | "% of Price"
+  pullback_range_pct: 25.0
+  pullback_pct: 0.4
+  plan_expire_bars: 100
+  break_either_way: false
+
+  # --- Trade Days (true = allowed to open on that day) ---
+  trade_days:
+    sun: false
+    mon: false
+    tue: true
+    wed: true
+    thu: true
+    fri: true
+    sat: false
+
+  # --- Mid-Level Entry (parallel with pullback) ---
+  use_mid_level: true
+  mid_only: false
+  mid_dual_side: false
+  mid_entry_pct: 25.0
+  mid_sl_mode: "% of Box"       # "Box Edge" | "% of Box"
+  mid_sl_pct: 50.0
+  mid_tp_mode: "R:R Ratio"      # "Box Edge" | "R:R Ratio" | "% of Box"
+  mid_rr: 1.0
+  mid_tp_pct: 100.0
+
+  # --- Risk Management ---
+  one_r_basis: "SL%"            # "SL%" | "Distance" | "ATR"
+  one_r_pct_val: 25.0
+  one_r_dist_fix: 5.0
+  one_r_atr_period: 14
+  one_r_atr_mult: 1.5
+  sl_edge_mode: false
+  rr_ratio: 1.0
+  spread_pts: 0.0
+
+  # --- Timezone for trade-day filter & stats bucketing ---
+  tz_offset_hours: 0
+
+sizing:
+  risk_usdt: 50.0              # money risked per 1R
+  ct_val: 0.01                # BTC per contract (auto-read from exchange at start)
+  min_contracts: 1.0          # auto-read from exchange
+  lot_size: 1.0               # auto-read from exchange
+  max_contracts: 0.0          # 0 = uncapped
+  leverage: 5
+  td_mode: "cross"            # "cross" | "isolated"
+  use_pine_sizing: false      # true => size = risk/(oneR*pip_value_ratio)
+  pip_value_ratio: 100.0
+
+exchange:
+  inst_id: "BTC-USDT-SWAP"
+  bar: "30m"
+  demo: true                  # OKX demo (paper) trading; set false for real funds
+  base_url: "https://www.okx.com"
+  hedge_mode: false           # true if your account is in long/short hedge mode
+
+runtime:
+  mode: "dry-run"             # "dry-run" (no orders) | "live"
+  poll_seconds: 20
+  candle_history: 300
+  state_file: "state/bot_state.json"
+  log_file: "logs/bot.log"
+  log_level: "INFO"
