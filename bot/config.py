@@ -62,6 +62,13 @@ class StrategyConfig:
     rr_ratio: float = 1.0                  # Risk : Reward for pullback trades
     spread_pts: float = 0.0                # spread (price units)
 
+    # --- Intrabar check (Lower TF) --- mirrors Pine's useLtf / ltfTf.
+    # Disambiguates same-bar TP/SL touches and entry-fill-bar sequencing using
+    # real lower-timeframe candles. Backtest-only (live TP/SL is enforced by
+    # OKX's own attached orders, which already resolve this correctly).
+    use_ltf: bool = True
+    ltf_bar: str = "1m"
+
     # --- Timezone (used for the trade-day filter & stats bucketing) ---
     tz_offset_hours: int = 0               # UTC(+/-); use_exchange -> ignored
 

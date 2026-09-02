@@ -96,10 +96,20 @@ class OKXClient:
     # Public market data
     # ------------------------------------------------------------------
     def get_candles(self, inst_id: str, bar: str = "30m", limit: int = 300,
-                    history: bool = False) -> List[List[str]]:
-        """Return raw candles newest-first: [ts, o, h, l, c, vol, ...]."""
+                    history: bool = False, after: Optional[int] = None,
+                    before: Optional[int] = None) -> List[List[str]]:
+        """Return raw candles newest-first: [ts, o, h, l, c, vol, ...].
+
+        ``after``  = only return candles with ts strictly earlier than this (OKX semantics).
+        ``before`` = only return candles with ts strictly later than this (OKX semantics).
+        """
         path = "/api/v5/market/history-candles" if history else "/api/v5/market/candles"
-        return self._request("GET", path, params={"instId": inst_id, "bar": bar, "limit": limit})
+        params: Dict[str, Any] = {"instId": inst_id, "bar": bar, "limit": limit}
+        if after is not None:
+            params["after"] = str(after)
+        if before is not None:
+            params["before"] = str(before)
+        return self._request("GET", path, params=params)
 
     def get_ticker(self, inst_id: str) -> dict:
         data = self._request("GET", "/api/v5/market/ticker", params={"instId": inst_id})

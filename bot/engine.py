@@ -23,13 +23,58 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .config import Config
 from .indicators import pivot_high, pivot_low, atr_series
 
 
 DAY_NAMES = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+
+# A lower-timeframe provider returns ascending (high, low) sub-bar tuples for
+# the *current* parent bar's timestamp, or None if no intrabar data exists
+# (mirrors Pine's ``array.size(ltfL) > 0`` guard -> pessimistic fallback).
+LtfProviderT = Callable[[int], Optional[List[Tuple[float, float]]]]
+
+
+def ltf_first_hit(subbars: List[Tuple[float, float]], is_buy: bool,
+                  sl: float, tp: float) -> int:
+    """Port of Pine's ``f_ltfFirstHit`` — which of SL/TP is touched first.
+
+    Returns 0 (neither), 1 (SL first) or 2 (TP first). SL wins when both are
+    touched within the same sub-bar (pessimistic ambiguity, same as Pine).
+    """
+    for h, l in subbars:
+        hit_sl = (l <= sl) if is_buy else (h >= sl)
+        hit_tp = (h >= tp) if is_buy else (l <= tp)
+        if hit_sl:
+            return 1
+        if hit_tp:
+            return 2
+    return 0
+
+
+def ltf_entry_hit(subbars: List[Tuple[float, float]], is_buy: bool,
+                  ent: float, sl: float, tp: float) -> int:
+    """Port of Pine's ``f_ltfEntryHit`` — resolve the entry (limit-fill) bar.
+
+    Finds the sub-bar where the limit order fills, then only counts a *proven*
+    post-fill SL/TP touch. A TP touch in the very fill sub-bar is ignored
+    (the extremum may have preceded the fill). Returns 0/1/2 as above.
+    """
+    filled = False
+    for h, l in subbars:
+        if not filled:
+            if (l <= ent) if is_buy else (h >= ent):
+                filled = True
+                if (l <= sl) if is_buy else (h >= sl):
+                    return 1
+        else:
+            if (l <= sl) if is_buy else (h >= sl):
+                return 1
+            if (h >= tp) if is_buy else (l <= tp):
+                return 2
+    return 0
 
 
 @dataclass
@@ -139,9 +184,15 @@ def compute_trade_levels(cfg: Config, plan: Plan, atr_val: float):
 
 
 class StrategyEngine:
-    def __init__(self, cfg: Config, simulate_fills: bool = True):
+    def __init__(self, cfg: Config, simulate_fills: bool = True,
+                ltf_provider: Optional[LtfProviderT] = None):
         self.cfg = cfg
         self.simulate_fills = simulate_fills
+        # Optional callable(parent_ts_ms) -> [(high, low), ...] | None, mirroring
+        # Pine's request.security_lower_tf intrabar check (useLtf). When unset,
+        # ambiguous same-bar TP/SL touches fall back to Pine's own pessimistic
+        # no-intrabar-data behaviour.
+        self.ltf_provider = ltf_provider
 
         # rolling series
         self.highs: List[float] = []
@@ -409,10 +460,18 @@ class StrategyEngine:
             origin_ts=plan.origin_ts, ptype=plan.ptype))
 
     def _resolve_trades(self):
-        """Backtest SL/TP resolution (pessimistic on ambiguous bars)."""
+        """Backtest SL/TP resolution.
+
+        When ``ltf_provider`` is set, ambiguous same-bar touches and the
+        entry-fill bar are disambiguated using real intrabar sub-bars, exactly
+        like Pine's ``useLtf``. Without a provider (or when it returns no
+        data), falls back to Pine's own pessimistic no-intrabar-data rule.
+        """
         bar = self.bar_index
         high = self.highs[bar]
         low = self.lows[bar]
+        subbars: Optional[List[Tuple[float, float]]] = None
+        subbars_fetched = False
         i = len(self.open_trades) - 1
         while i >= 0:
             t = self.open_trades[i]
@@ -422,13 +481,31 @@ class StrategyEngine:
                 entry_bar = bar == t.bar_idx
                 closed_win = False
                 closed_loss = False
+
+                need_ltf = entry_bar or (hit_sl and hit_tp)
+                if need_ltf and self.ltf_provider is not None and not subbars_fetched:
+                    subbars = self.ltf_provider(self.times[bar])
+                    subbars_fetched = True
+
                 if entry_bar:
-                    # On the fill bar only a proven SL touch counts (no intrabar data
-                    # available -> pessimistic).  TP alone on the fill bar is ignored.
-                    if hit_sl:
+                    # Fill sub-bar found -> only a proven post-fill SL touch counts;
+                    # a bare TP touch on the fill bar is ignored (may precede fill).
+                    if subbars:
+                        fh = ltf_entry_hit(subbars, t.is_buy, t.entry, t.sl, t.tp)
+                        if fh == 1:
+                            closed_loss = True
+                        elif fh == 2:
+                            closed_win = True
+                        # fh == 0 -> genuinely unresolved this bar, stays open.
+                    elif hit_sl:
                         closed_loss = True
                 elif hit_sl and hit_tp:
-                    closed_loss = True  # ambiguous -> pessimistic loss
+                    if subbars:
+                        fh2 = ltf_first_hit(subbars, t.is_buy, t.sl, t.tp)
+                        closed_win = fh2 == 2
+                        closed_loss = fh2 != 2
+                    else:
+                        closed_loss = True  # ambiguous, no intrabar data -> pessimistic
                 elif hit_sl:
                     closed_loss = True
                 elif hit_tp:

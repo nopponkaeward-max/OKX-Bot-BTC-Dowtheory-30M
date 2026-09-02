@@ -10,9 +10,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from bot.config import Config
 from bot.engine import (
     StrategyEngine, Candle, Plan, OpenTrade, compute_trade_levels, one_r_dist_of,
+    ltf_first_hit, ltf_entry_hit,
 )
 from bot.executor import size_contracts
 from bot.indicators import pivot_high, pivot_low, atr_series
+from bot.data import bar_to_seconds
 
 
 # --------------------------------------------------------------------------
@@ -201,6 +203,86 @@ def test_trade_day_filter_blocks_plan():
     eng._create_plans(True, 1100, 1000, 0, events)
     assert len(eng.plans) == 0                 # blocked
     assert any(e.get("note") == "no-trade-day" for e in events)
+
+
+# --------------------------------------------------------------------------
+# Intrabar (lower-TF) disambiguation — Pine's f_ltfFirstHit / f_ltfEntryHit
+# --------------------------------------------------------------------------
+def test_bar_to_seconds():
+    assert bar_to_seconds("30m") == 1800
+    assert bar_to_seconds("1H") == 3600
+    assert bar_to_seconds("1m") == 60
+    assert bar_to_seconds("1D") == 86400
+
+
+def test_ltf_first_hit_sl_before_tp():
+    # Buy: sub-bars ascending in time; SL touched in the 2nd sub-bar, TP later.
+    subbars = [(1005, 995), (1000, 989), (1015, 1005)]  # (high, low)
+    assert ltf_first_hit(subbars, True, sl=990, tp=1012) == 1
+
+
+def test_ltf_first_hit_tp_before_sl():
+    subbars = [(1012, 1000), (1015, 1001), (1002, 989)]
+    assert ltf_first_hit(subbars, True, sl=990, tp=1012) == 2
+
+
+def test_ltf_first_hit_same_subbar_is_pessimistic():
+    # Both SL and TP touched within the very same sub-bar -> SL wins (Pine order).
+    subbars = [(1020, 985)]
+    assert ltf_first_hit(subbars, True, sl=990, tp=1012) == 1
+
+
+def test_ltf_first_hit_neither():
+    subbars = [(1005, 998), (1006, 999)]
+    assert ltf_first_hit(subbars, True, sl=990, tp=1012) == 0
+
+
+def test_ltf_entry_hit_sl_proven_after_fill():
+    # Buy limit at 1000: fills in sub-bar 2, SL(990) touched in sub-bar 4.
+    subbars = [
+        (1010, 1005),   # before fill
+        (1010, 998),    # fills here (low <= 1000)
+        (1005, 999),
+        (1004, 985),    # SL touched, proven post-fill
+    ]
+    assert ltf_entry_hit(subbars, True, ent=1000, sl=990, tp=1020) == 1
+
+
+def test_ltf_entry_hit_tp_on_fill_subbar_ignored():
+    # TP touched in the SAME sub-bar as the fill -> ignored (ambiguous order).
+    subbars = [(1025, 998)]  # low<=1000 fills; high>=1020 also true, but ignored
+    assert ltf_entry_hit(subbars, True, ent=1000, sl=990, tp=1020) == 0
+
+
+def test_ltf_entry_hit_tp_after_fill():
+    subbars = [
+        (1010, 998),    # fills
+        (1025, 1010),   # TP proven post-fill
+    ]
+    assert ltf_entry_hit(subbars, True, ent=1000, sl=990, tp=1020) == 2
+
+
+def test_engine_uses_ltf_provider_to_flip_ambiguous_loss_to_win():
+    cfg = Config()
+    provider_calls = []
+
+    def provider(ts):
+        provider_calls.append(ts)
+        # TP touched before SL within the ambiguous bar -> should resolve WIN.
+        return [(1012, 1002), (1002, 989)]
+
+    eng = StrategyEngine(cfg, simulate_fills=True, ltf_provider=provider)
+    c0 = Candle(ts=1_600_000_000_000, open=1000, high=1002, low=998, close=1000, volume=1)
+    eng.process_candle(c0)
+    eng.open_trades.append(OpenTrade(
+        id=1, is_buy=True, entry=1000, sl=990, tp=1010, bar_idx=0,
+        one_r=10, trr=1.0, origin_ts=c0.ts, ptype=0))
+    # Ambiguous: both SL(990) and TP(1010) touched on this bar.
+    c1 = Candle(ts=c0.ts + 1, open=1000, high=1011, low=989, close=1000, volume=1)
+    eng.process_candle(c1)
+    assert len(eng.closed_trades) == 1
+    assert eng.closed_trades[0].is_win  # flipped from the pessimistic default
+    assert provider_calls == [c1.ts]
 
 
 def test_dow_name():

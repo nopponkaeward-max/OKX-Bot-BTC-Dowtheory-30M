@@ -48,7 +48,11 @@ class Runner:
             passphrase=cfg.exchange.passphrase, demo=cfg.exchange.demo,
             base_url=cfg.exchange.base_url)
         self.live = cfg.runtime.mode == "live"
-        self.engine = StrategyEngine(cfg, simulate_fills=not self.live)
+        ltf_provider = None
+        if not self.live and cfg.strategy.use_ltf:
+            ltf_provider = datamod.LtfProvider(self.client, cfg.exchange.inst_id,
+                                               cfg.exchange.bar, cfg.strategy.ltf_bar)
+        self.engine = StrategyEngine(cfg, simulate_fills=not self.live, ltf_provider=ltf_provider)
         self.executor: Optional[Executor] = Executor(cfg, self.client, self.engine) if self.live else None
         self.last_ts: int = 0
         self._load_state()

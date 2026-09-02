@@ -6,15 +6,16 @@ of the indicator — and prints the reproduced statistics.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from .config import Config
-from .engine import Candle, StrategyEngine
+from .engine import Candle, LtfProviderT, StrategyEngine
 from . import stats
 
 
-def run_backtest(cfg: Config, candles: List[Candle], verbose: bool = False) -> StrategyEngine:
-    eng = StrategyEngine(cfg, simulate_fills=True)
+def run_backtest(cfg: Config, candles: List[Candle], verbose: bool = False,
+                 ltf_provider: Optional[LtfProviderT] = None) -> StrategyEngine:
+    eng = StrategyEngine(cfg, simulate_fills=True, ltf_provider=ltf_provider)
     for c in candles:
         eng.process_candle(c)
     if verbose:

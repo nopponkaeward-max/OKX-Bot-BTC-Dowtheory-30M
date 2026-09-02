@@ -32,14 +32,23 @@ def cmd_run(args):
 
 def cmd_backtest(args):
     cfg = load_config(args.config)
+    if args.no_ltf:
+        cfg.strategy.use_ltf = False
     client = OKXClient(
         api_key=cfg.exchange.api_key, api_secret=cfg.exchange.api_secret,
         passphrase=cfg.exchange.passphrase, demo=cfg.exchange.demo,
         base_url=cfg.exchange.base_url)
     print(f"Fetching {args.bars} bars of {cfg.exchange.inst_id} {cfg.exchange.bar} ...")
     candles = datamod.fetch_history(client, cfg.exchange.inst_id, cfg.exchange.bar, args.bars)
-    print(f"Got {len(candles)} bars. Running backtest ...\n")
-    eng = bt.run_backtest(cfg, candles, verbose=args.verbose)
+    print(f"Got {len(candles)} bars. Running backtest ...")
+    ltf_provider = None
+    if cfg.strategy.use_ltf:
+        print(f"Intrabar check enabled: resolving ambiguous bars with {cfg.strategy.ltf_bar} candles ...\n")
+        ltf_provider = datamod.LtfProvider(client, cfg.exchange.inst_id, cfg.exchange.bar,
+                                           cfg.strategy.ltf_bar)
+    else:
+        print()
+    eng = bt.run_backtest(cfg, candles, verbose=args.verbose, ltf_provider=ltf_provider)
     print("\n" + bt.summary(eng, tz_offset=cfg.strategy.tz_offset_hours,
                              months=args.months))
     print(f"\nClosed trades: {len(eng.closed_trades)} | "
@@ -69,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--bars", type=int, default=1500)
     pb.add_argument("--months", type=int, default=8)
     pb.add_argument("--verbose", action="store_true")
+    pb.add_argument("--no-ltf", action="store_true",
+                    help="disable intrabar lower-TF disambiguation (fast, more pessimistic)")
     pb.set_defaults(func=cmd_backtest)
 
     pc = sub.add_parser("config", help="print resolved config")

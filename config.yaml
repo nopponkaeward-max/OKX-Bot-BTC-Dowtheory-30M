@@ -44,6 +44,12 @@ strategy:
   rr_ratio: 1.0
   spread_pts: 0.0
 
+  # --- Intrabar check (Lower TF) ---
+  # Backtest-only: disambiguates same-bar TP/SL touches with real 1m candles,
+  # matching Pine's useLtf. Adds one extra OKX API call per closed trade.
+  use_ltf: true
+  ltf_bar: "1m"
+
   # --- Timezone for trade-day filter & stats bucketing ---
   tz_offset_hours: 0
 
