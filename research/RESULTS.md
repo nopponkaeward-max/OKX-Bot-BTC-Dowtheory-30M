@@ -170,9 +170,38 @@ Instrument: BTC-USDT-SWAP · TF: 30m (closed bars only) · direction: both
 6. Alternative profile (fewer, better trades): %K <5/>95 + 3.0×ATR,
    dist 2500 → 84.9%, ~3.5 trades/month.
 
-## Next (round 7 plan)
-* Extend 30m history to 2024 (deep OOS — strongest remaining robustness
-  test for the flagship, including the recent-decay question).
-* Rolling 50-trade winrate curve to visualise regime drift.
-* New families: two-bar reversal, volume-climax wick, Keltner
-  re-entry-with-confirmation.
+## Round 7 (2026-09-03) — DEEP OOS on 2.7 years: the edge is REGIME-DRIVEN
+
+30m data extended to Dec 2023 – Sep 2026 (47,000 bars).
+
+**A) Flagship by calendar year (fixed d1500):**
+| year | trades | win% | netR |
+|------|--------|------|------|
+| 2024 | 65 | **55.4%** | +7 |
+| 2025 | 99 | **84.8%** | +69 |
+| 2026 | 67 | **71.6%** | +29 |
+| ALL (2.7y) | 231 | **72.7%** | **+105** |
+
+Price-proportional distances (1.0–2.0% of price, floor 500) tell the same
+story — the yearly split is a regime property, not a distance artefact.
+
+**B) Rolling 50-trade winrate:** flat ~56% through 2024→mid-2025, ignites
+to 84–88% around Dec-2025→Feb-2026, and has cooled to ~60% by Aug-2026.
+
+**Honest verdict:** Exhaustion Fade is profitable over the whole 2.7 years
+(+105R, 72.7% — still above the 70% brief overall) and never had a losing
+year, but the spectacular 79.6% figure came from a hot regime that is
+currently cooling. Live expectation today should be ~60-70%, not 80%. A
+regime monitor (e.g., stand aside if the rolling 20-trade winrate < 55%)
+belongs in any production deployment.
+
+**C) New families — all fail again:** two-bar reversal (46%, heavily
+negative), volume-climax wick (<52%), Keltner re-entry (<53%).
+
+## Next (round 8 plan)
+* Re-run ALL prior >=65% families over the full 2.7 years — which survive
+  2024+2025+2026 with every year >= 60%? (new, stricter bar)
+* Walk-forward regime gate on the flagship: trade only while the rolling
+  20-signal winrate >= 55%; measure live-like performance.
+* Probe what switched on in mid-2025 (ATR%/price level? trend regime?)
+  to build a forward-looking gate instead of a backward-looking one.
