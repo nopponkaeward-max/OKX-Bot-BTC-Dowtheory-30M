@@ -113,9 +113,29 @@ multi-TF stoch alignment (max 64.3%). None reaches 70%.
 | 1H  | 76.0% @ d2000 (50t) | passes |
 | 2H  | 80.0% @ d3000 (20t) | passes but thin sample |
 
-## Next (round 5 plan)
-* Limit-entry variant (retrace into the climax bar) vs market entry.
-* Portfolio stats for flagship: equity curve in R, max drawdown, streaks.
-* Day-of-week breakdown; combined 30m+1H portfolio overlap check.
-* New families: failed-breakout fade (fakeout), squeeze-expansion,
-  first-hour range strategies.
+## Round 5 (2026-09-03) — execution variant, portfolio stats, more families
+
+**A) Limit-entry variant is WORSE — market entry is the right execution.**
+Waiting for a retrace into the climax bar (limit at close ± 25-60% of the
+bar range, 16-bar expiry) drops winrate to 58-66% and forfeits most trades:
+the best reversals run immediately and never retrace. Dead end; keep
+market-at-next-open.
+
+**B) Flagship portfolio quality (30m d1500, 137 trades / 15 months):**
+* final equity **+81R**, max drawdown **5R**, max consecutive losses **4**
+* every weekday >= 72% winrate (Tue 88%, Sun 72%) — no day filter needed.
+
+**C) 30m + 1H portfolio: 82% of 1H trades overlap an open 30m trade.**
+The 1H port is mostly the same exposure, not diversification. Run 30m only
+(or accept correlated size-doubling).
+
+**D) New families — all fail (documented dead ends):** failed-breakout
+fade (<53%), squeeze-expansion (<61%), first-hour-range follow/fade (<54%).
+
+## Next (round 6 plan)
+* Funding-rate data from OKX (/public/funding-rate-history): funding-extreme
+  fade, and funding filter on the flagship.
+* Candle patterns: engulfing after streaks, doji at extremes.
+* Weekend / Monday-open reversion effects.
+* Draft a production spec for the flagship (entry/exit/size rules) in case
+  the user wants it implemented as a bot module.
