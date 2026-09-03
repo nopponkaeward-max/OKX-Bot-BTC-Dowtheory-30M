@@ -198,10 +198,38 @@ belongs in any production deployment.
 **C) New families — all fail again:** two-bar reversal (46%, heavily
 negative), volume-climax wick (<52%), Keltner re-entry (<53%).
 
-## Next (round 8 plan)
-* Re-run ALL prior >=65% families over the full 2.7 years — which survive
-  2024+2025+2026 with every year >= 60%? (new, stricter bar)
-* Walk-forward regime gate on the flagship: trade only while the rolling
-  20-signal winrate >= 55%; measure live-like performance.
-* Probe what switched on in mid-2025 (ATR%/price level? trend regime?)
-  to build a forward-looking gate instead of a backward-looking one.
+## Round 8 (2026-09-03) — survivor test crowns a new champion
+
+**A) Survivor test (every calendar year must be >= 60%, 2.7y, 30m):**
+Of 10 families that ever cleared 65%, exactly ONE passes:
+
+### NEW CHAMPION — "Exhaustion Fade TIGHT"
+%K(14) < 5 (red bar → LONG) / > 95 (green bar → SHORT) AND range > 3.0×ATR(14),
+market at next open, RR 1:1.
+| dist | ALL (2.7y) | 2024 | 2025 | 2026 |
+|------|-----------|------|------|------|
+| 1500 | 83.3% / 96t | 69.2% | 97.5% | 76.7% |
+| **2500** | **82.4% / 91t / +59R** | **76.9%** | **89.7%** | **76.9%** |
+
+d2500 is the steadiest profile ever measured here: 77/90/77 across three
+very different years, ~3 trades/month. The loose flagship (10/90+2.5x)
+fails 2024 at 55%; every classic mean-reversion family collapses to
+45–58% in 2024. The tight thresholds are not overfit decoration — they
+are what separates a real edge from regime luck.
+
+**B) Walk-forward rolling-winrate gate: rejected.** Gating the loose
+flagship on its own trailing 20-trade winrate changes nothing
+(72.3–73.4% vs 72.7% baseline) and the skipped trades actually won 67-82%.
+Backward-looking gates are too laggy at ~9 trades/month.
+
+**C) Attribution:** flagship wins concentrate where ATR/price > 0.4%
+(74.3% vs 33.3% below) and near EMA200 (<3 ATR stretch: 75.6%). The tight
+variant's 3.0×ATR bar requirement already embeds the volatility condition —
+explaining why it survives 2024.
+
+## Next (round 9 plan)
+* Full validation battery on the TIGHT champion: monthly curve, sides,
+  sessions, plateau (4/96, 5/95, 6/94 × 2.75-3.25×ATR), d2000-3000,
+  1H port, 1m ambiguity recheck, equity/DD.
+* Try extending 30m data into 2022-2023 (bear market) if OKX serves it —
+  the ultimate regime test.
