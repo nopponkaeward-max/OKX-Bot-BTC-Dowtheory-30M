@@ -89,10 +89,33 @@ OOS-confirmed, both sides & all sessions profitable.
 Conservative resolution (same-bar double-touch counted as LOSS).
 Fees not modeled (~0.1% notional round trip ≈ 7% of one R at d1500).
 
-## Next (round 4 plan)
-* 1m intrabar re-resolution of flagship ambiguous bars (upper-bound check).
-* Combine flagship + Keltner confluence; volatility-regime filter for the
-  weak Apr/Jul-2026 patches.
-* More unexplored families: gap-fill, round-number bounce, OI/funding-based
-  (if OKX history available), multi-TF stoch alignment.
-* 15m/2H/4H ports of the flagship with ATR-scaled (>=500) distances.
+## Round 4 (2026-09-03) — 1m recheck, filters, new families, TF ports
+
+**A) 1m intrabar recheck: the pessimistic numbers are essentially exact.**
+Flagship d1500 had 1 ambiguous bar in 137 trades (flips to a win with real
+1m data → 80.3% upper bound vs 79.6% floor). At d1000, 6 of 7 ambiguous
+bars really were SL-first — the pessimistic rule is the right default.
+
+**B) Filters (both help slightly, none is required):**
+* +Keltner(EMA20±3ATR) confluence: 81.8% / 55t / +35R (d1500)
+* high-vol regime only: 80.3% / 61t; low-vol only: 78.5% / 79t
+  → the edge exists in BOTH volatility regimes (robustness, not a fix).
+
+**C) New families — dead ends (documented to avoid re-testing):**
+gap-fill (too few signals), round-number bounce (45-47%, negative netR),
+multi-TF stoch alignment (max 64.3%). None reaches 70%.
+
+**D) Flagship across TFs (same rule, ATR-proportional distances):**
+| TF | best | verdict |
+|----|------|---------|
+| 15m | 54% @ d500-750 | **fails** — climax-fade edge vanishes at 15m |
+| 30m | 79.6% @ d1500 (137t) | champion |
+| 1H  | 76.0% @ d2000 (50t) | passes |
+| 2H  | 80.0% @ d3000 (20t) | passes but thin sample |
+
+## Next (round 5 plan)
+* Limit-entry variant (retrace into the climax bar) vs market entry.
+* Portfolio stats for flagship: equity curve in R, max drawdown, streaks.
+* Day-of-week breakdown; combined 30m+1H portfolio overlap check.
+* New families: failed-breakout fade (fakeout), squeeze-expansion,
+  first-hour range strategies.
