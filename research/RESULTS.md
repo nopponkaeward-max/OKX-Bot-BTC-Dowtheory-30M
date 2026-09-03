@@ -56,9 +56,43 @@ Near-misses worth revisiting: range50_edge_rev 30m d2000 (69.4%/121t),
 confl_stoch+boll 30m d2000 (69.0%/168t, more trades), fade2.5_wtrend 2H
 d2000 (69.7%/33t).
 
-## Next (round 3 plan)
-* Volatility-regime & session filters on the near-misses.
-* Keltner touch, Donchian-mid reversion, liquidation-wick reversal,
-  multi-TF confluence (30m signal + 4H trend).
-* Re-resolve ambiguous bars of top candidates with real 1m data.
-* Longer 30m history (back to 2025) to test confl_stoch+fade out-of-sample.
+## Round 3 (2026-09-03) — OOS test, plateau map, sessions, new families
+
+30m data extended to 15 months (Jun 2025 – Sep 2026, 22000 bars).
+
+**A) Out-of-sample (Jun–Dec 2025, data the strategy never saw): PASSED.**
+d1500 83.9% (56t), d2000 77.4%, d2500 72.5%; only d3000 dipped (65.3%).
+Full 15-month window: d1500 **79.6% / 137 trades / +81R**, d2000 76.9%/+70R,
+d2500 76.7%/+62R, d3000 73.3%/+49R.
+
+**B) Parameter plateau (d2500, 15 months): smooth, no isolated spike.**
+Tightening both filters raises winrate monotonically:
+stoch<5/>95 + atr>3.0x → **84.9% / 53 trades / +37R**;
+loosening to 20/80 + 2.0x still 66.7% / 240 trades / +80R.
+
+**C) Session split: edge exists in all three 8h sessions** (US strongest —
+83.0% d1500). New family Keltner(EMA20±3*ATR) reversion also clears 70%
+(71.2% / 104t / +44R at d2000).
+
+**Monthly stability (15 months):**
+* flagship (10/90, 2.5x, d1500): 12/15 months positive, worst -2R (Apr-26)
+* tight (5/95, 3.0x, d2500): 13/15 months positive, worst -2R
+
+### FLAGSHIP CANDIDATE — "Exhaustion Fade"
+Entry (all must hold on a closed 30m bar):
+1. bar range > 2.5 x ATR(14)  — a climax bar
+2. Stoch %K(14) < 10 with a red bar -> LONG next open;
+   %K > 90 with a green bar -> SHORT next open
+3. TP = SL = 1500 pts (RR 1:1), market entry at next bar open
+Result: 79.6% winrate, 137 trades / 15 months (~9/month), +81R,
+OOS-confirmed, both sides & all sessions profitable.
+Conservative resolution (same-bar double-touch counted as LOSS).
+Fees not modeled (~0.1% notional round trip ≈ 7% of one R at d1500).
+
+## Next (round 4 plan)
+* 1m intrabar re-resolution of flagship ambiguous bars (upper-bound check).
+* Combine flagship + Keltner confluence; volatility-regime filter for the
+  weak Apr/Jul-2026 patches.
+* More unexplored families: gap-fill, round-number bounce, OI/funding-based
+  (if OKX history available), multi-TF stoch alignment.
+* 15m/2H/4H ports of the flagship with ATR-scaled (>=500) distances.
