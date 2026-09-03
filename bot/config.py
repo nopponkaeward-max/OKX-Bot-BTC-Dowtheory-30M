@@ -94,6 +94,7 @@ class SizingConfig:
     ct_val: float = 0.01                   # BTC per contract (OKX BTC-USDT-SWAP)
     min_contracts: float = 1.0             # OKX minimum order size (contracts)
     lot_size: float = 1.0                  # contract step size
+    tick_size: float = 0.1                 # price tick (auto-read from exchange)
     max_contracts: float = 0.0             # 0 = no cap
     leverage: int = 5                      # leverage to set on the instrument
     td_mode: str = "cross"                 # "cross" | "isolated"

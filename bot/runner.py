@@ -110,6 +110,10 @@ class Runner:
 
     # ------------------------------------------------------------------
     def step(self):
+        # Poll fills every cycle (not only on new bars): a limit can fill any
+        # time inside the 30m bar and we want the plan dropped promptly.
+        if self.executor:
+            self.executor.poll_fills()
         candles = datamod.fetch_recent(
             self.client, self.cfg.exchange.inst_id, self.cfg.exchange.bar,
             self.cfg.runtime.candle_history, only_confirmed=True)
@@ -123,10 +127,10 @@ class Runner:
                 self._log_dry(c)
             self.last_ts = c.ts
 
-        if self.executor and new:
-            self.executor.poll_fills()
-            # ensure freshly-armed plans (post-break this cycle) rest on exchange
-            self._reconcile_armed()
+        if self.executor:
+            if new:
+                # ensure freshly-armed plans (post-break this cycle) rest on exchange
+                self._reconcile_armed()
             self._save_state()
 
         if new:

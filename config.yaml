@@ -58,6 +58,7 @@ sizing:
   ct_val: 0.01                # BTC per contract (auto-read from exchange at start)
   min_contracts: 1.0          # auto-read from exchange
   lot_size: 1.0               # auto-read from exchange
+  tick_size: 0.1              # price tick; auto-read from exchange at start
   max_contracts: 0.0          # 0 = uncapped
   leverage: 5
   td_mode: "cross"            # "cross" | "isolated"

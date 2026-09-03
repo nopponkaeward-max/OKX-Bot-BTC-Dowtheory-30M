@@ -357,10 +357,15 @@ class StrategyEngine:
                 mid_ent = (top - rng * (s.mid_entry_pct / 100.0)) if mid_buy else (bot + rng * (s.mid_entry_pct / 100.0))
                 make_mid = (close > mid_ent) if mid_buy else (close < mid_ent)
             if make_mid:
-                self._add_plan(Plan(
+                mp = Plan(
                     id=self._new_id(), is_buy=mid_buy, break_lvl=None, pb_target=mid_ent,
                     top=top, bot=bot, rng=rng, create_bar=self.bar_index, state=1,
-                    any_break=False, ptype=1, origin_ts=ts))
+                    any_break=False, ptype=1, origin_ts=ts)
+                self._add_plan(mp)
+                # Pine can fill this limit on the very next bar, so in live mode
+                # the order must rest from this bar's close — not one bar later.
+                if not self.simulate_fills:
+                    self._arm(mp, events)
 
     def _new_id(self) -> int:
         i = self._next_id
@@ -383,7 +388,12 @@ class StrategyEngine:
         })
 
     def _cancel_plan(self, plan: Plan, reason: str, events: List[Dict[str, Any]]):
-        events.append({"type": "CANCEL", "plan_id": plan.id, "reason": reason})
+        # Carry the order signature: the plan is removed from ``self.plans``
+        # before the executor sees this event, so a plan-id lookup would miss.
+        events.append({
+            "type": "CANCEL", "plan_id": plan.id, "reason": reason,
+            "origin_ts": plan.origin_ts, "ptype": plan.ptype, "is_buy": plan.is_buy,
+        })
 
     def _run_plan_state_machine(self, events: List[Dict[str, Any]]):
         s = self.cfg.strategy

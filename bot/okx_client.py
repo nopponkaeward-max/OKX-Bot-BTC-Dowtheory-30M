@@ -43,8 +43,8 @@ class OKXClient:
 
     # ------------------------------------------------------------------
     def _timestamp(self) -> str:
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + \
-            f"{datetime.now(timezone.utc).microsecond // 1000:03d}Z"
+        now = datetime.now(timezone.utc)  # single read: two now() calls can straddle a second
+        return now.strftime("%Y-%m-%dT%H:%M:%S.") + f"{now.microsecond // 1000:03d}Z"
 
     def _sign(self, ts: str, method: str, path: str, body: str) -> str:
         msg = f"{ts}{method}{path}{body}"

@@ -17,8 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, asdict
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional
 
 from .config import Config
@@ -38,11 +40,21 @@ def size_contracts(cfg: Config, one_r: float) -> float:
         qty_btc = s.risk_usdt / one_r        # USD risk / USD move-per-BTC = BTC
         qty = qty_btc / s.ct_val             # -> contracts
     if s.lot_size > 0:
-        qty = round(qty / s.lot_size) * s.lot_size
+        # Floor to the lot step: rounding up would risk more than risk_usdt.
+        qty = math.floor(qty / s.lot_size + 1e-9) * s.lot_size
     qty = max(qty, s.min_contracts)
     if s.max_contracts > 0:
         qty = min(qty, s.max_contracts)
     return round(qty, 8)
+
+
+def quantize_str(value: float, step: float) -> str:
+    """Quantize ``value`` to a multiple of ``step`` (exchange tick/lot size)
+    and render it as a plain decimal string (never scientific notation)."""
+    if step <= 0:
+        return format(Decimal(str(value)).normalize(), "f")
+    d = (Decimal(str(value)) / Decimal(str(step))).to_integral_value(rounding=ROUND_HALF_UP)
+    return format((d * Decimal(str(step))).normalize(), "f")
 
 
 def _sig(plan: Plan, entry: float) -> str:
@@ -89,9 +101,10 @@ class Executor:
                 self.cfg.sizing.ct_val = float(inst.get("ctVal", self.cfg.sizing.ct_val))
                 self.cfg.sizing.lot_size = float(inst.get("lotSz", self.cfg.sizing.lot_size))
                 self.cfg.sizing.min_contracts = float(inst.get("minSz", self.cfg.sizing.min_contracts))
-                log.info("Instrument %s: ctVal=%s lotSz=%s minSz=%s",
+                self.cfg.sizing.tick_size = float(inst.get("tickSz", self.cfg.sizing.tick_size))
+                log.info("Instrument %s: ctVal=%s lotSz=%s minSz=%s tickSz=%s",
                          self.cfg.exchange.inst_id, inst.get("ctVal"),
-                         inst.get("lotSz"), inst.get("minSz"))
+                         inst.get("lotSz"), inst.get("minSz"), inst.get("tickSz"))
         except OKXError as e:
             log.warning("Could not load instrument spec: %s", e)
 
@@ -112,13 +125,17 @@ class Executor:
             if ev["type"] == "ARM" and act:
                 self._place_entry(ev)
             elif ev["type"] == "CANCEL" and act:
-                self._cancel_by_plan(ev["plan_id"])
+                self._cancel_by_event(ev)
 
     def _place_entry(self, ev: Dict):
-        plan = self.engine.get_plan(ev["plan_id"])
-        entry = ev["entry"]
-        # Build a synthetic plan-like object for signature helpers
-        class _P:  # minimal shim
+        tick = self.cfg.sizing.tick_size
+        # OKX rejects prices that are not a multiple of the instrument tick size.
+        entry_s = quantize_str(ev["entry"], tick)
+        sl_s = quantize_str(ev["sl"], tick)
+        tp_s = quantize_str(ev["tp"], tick)
+        entry, sl, tp = float(entry_s), float(sl_s), float(tp_s)
+
+        class _P:  # minimal shim for signature helpers
             origin_ts = ev["origin_ts"]
             ptype = ev["ptype"]
             is_buy = ev["is_buy"]
@@ -137,12 +154,12 @@ class Executor:
             "clOrdId": cl,
             "side": "buy" if ev["is_buy"] else "sell",
             "ordType": "limit",
-            "px": f"{entry}",
-            "sz": f"{size}",
+            "px": entry_s,
+            "sz": quantize_str(size, 0),
             "attachAlgoOrds": [{
-                "tpTriggerPx": f"{ev['tp']}",
+                "tpTriggerPx": tp_s,
                 "tpOrdPx": "-1",
-                "slTriggerPx": f"{ev['sl']}",
+                "slTriggerPx": sl_s,
                 "slOrdPx": "-1",
                 "tpTriggerPxType": "last",
                 "slTriggerPxType": "last",
@@ -155,22 +172,50 @@ class Executor:
             ord_id = res.get("ordId", "")
             self.orders[sig] = OrderRec(
                 sig=sig, cl_ord_id=cl, ord_id=ord_id, is_buy=ev["is_buy"],
-                entry=entry, sl=ev["sl"], tp=ev["tp"], one_r=ev["one_r"],
+                entry=entry, sl=sl, tp=tp, one_r=ev["one_r"],
                 trr=ev["trr"], ptype=ev["ptype"], origin_ts=ev["origin_ts"], size=size)
-            log.info("PLACED %s %s limit @%.1f sz=%s SL=%.1f TP=%.1f (ord %s)",
+            log.info("PLACED %s %s limit @%s sz=%s SL=%s TP=%s (ord %s)",
                      "BUY" if ev["is_buy"] else "SELL",
-                     "MID" if ev["ptype"] == 1 else "PB", entry, size,
-                     ev["sl"], ev["tp"], ord_id or cl)
+                     "MID" if ev["ptype"] == 1 else "PB", entry_s, size,
+                     sl_s, tp_s, ord_id or cl)
         except OKXError as e:
             log.error("place_order failed for plan %s: %s", ev["plan_id"], e)
+            self._adopt_existing(sig, cl, ev, entry, sl, tp, size)
 
-    def _cancel_by_plan(self, plan_id: int):
-        plan = self.engine.get_plan(plan_id)
-        # We may not have the plan anymore; try matching by any placed order that
-        # is still resting for this origin.  Cancel any 'placed' order not filled.
+    def _adopt_existing(self, sig: str, cl: str, ev: Dict,
+                        entry: float, sl: float, tp: float, size: float):
+        """Recover an order OKX already holds under our clOrdId.
+
+        Happens when a place request timed out but was accepted (the retry is
+        then rejected as a duplicate clOrdId), or when local state was lost
+        across a restart.  Without adopting it, every cycle would re-fail while
+        an untracked order rests on the exchange."""
+        try:
+            info = self.client.get_order(self.cfg.exchange.inst_id, cl_ord_id=cl)
+        except OKXError:
+            return
+        state = info.get("state")
+        if state not in ("live", "partially_filled", "filled"):
+            return
+        self.orders[sig] = OrderRec(
+            sig=sig, cl_ord_id=cl, ord_id=info.get("ordId", ""), is_buy=ev["is_buy"],
+            entry=float(info.get("avgPx") or entry), sl=sl, tp=tp,
+            one_r=ev["one_r"], trr=ev["trr"], ptype=ev["ptype"],
+            origin_ts=ev["origin_ts"], size=size,
+            status="filled" if state == "filled" else "placed")
+        if state == "filled":
+            self.engine.remove_plan_by_id_by_sig(ev["origin_ts"], ev["ptype"], ev["is_buy"])
+        log.info("ADOPTED existing order %s (state=%s)", cl, state)
+
+    def _cancel_by_event(self, ev: Dict):
+        """Cancel resting orders matching the cancelled plan's signature.
+
+        The engine drops the plan from its list before this event is handled,
+        so matching must use the (origin_ts, ptype, is_buy) carried in the
+        event — a plan-id lookup would always miss."""
         for rec in self.orders.values():
-            if rec.status == "placed" and plan and rec.origin_ts == plan.origin_ts \
-                    and rec.ptype == plan.ptype and rec.is_buy == plan.is_buy:
+            if rec.status == "placed" and rec.origin_ts == ev.get("origin_ts") \
+                    and rec.ptype == ev.get("ptype") and rec.is_buy == ev.get("is_buy"):
                 self._cancel_order(rec)
 
     def _cancel_order(self, rec: OrderRec):

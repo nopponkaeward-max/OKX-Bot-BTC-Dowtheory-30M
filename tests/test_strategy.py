@@ -12,7 +12,7 @@ from bot.engine import (
     StrategyEngine, Candle, Plan, OpenTrade, compute_trade_levels, one_r_dist_of,
     ltf_first_hit, ltf_entry_hit,
 )
-from bot.executor import size_contracts
+from bot.executor import size_contracts, quantize_str
 from bot.indicators import pivot_high, pivot_low, atr_series
 from bot.data import bar_to_seconds
 
@@ -283,6 +283,55 @@ def test_engine_uses_ltf_provider_to_flip_ambiguous_loss_to_win():
     assert len(eng.closed_trades) == 1
     assert eng.closed_trades[0].is_win  # flipped from the pessimistic default
     assert provider_calls == [c1.ts]
+
+
+def test_size_contracts_floors_to_lot():
+    cfg = Config()
+    cfg.sizing.risk_usdt = 50
+    cfg.sizing.ct_val = 0.01
+    cfg.sizing.lot_size = 1
+    cfg.sizing.min_contracts = 1
+    # 50/26 = 1.923 BTC -> 192.3 contracts -> floors to 192 (never risk more)
+    assert size_contracts(cfg, 26) == 192
+
+
+def test_quantize_str_tick_size():
+    assert quantize_str(65123.44, 0.1) == "65123.4"
+    assert quantize_str(65123.45678, 0.1) == "65123.5"
+    assert quantize_str(65000.0, 0.1) == "65000"
+    assert quantize_str(0.2, 0) == "0.2"          # step 0 -> passthrough, no sci notation
+
+
+def test_cancel_event_carries_signature():
+    cfg = Config()
+    eng = StrategyEngine(cfg, simulate_fills=False)
+    c0 = Candle(ts=1_600_000_000_000, open=1000, high=1002, low=998, close=1000, volume=1)
+    eng.process_candle(c0)
+    p = Plan(id=5, is_buy=True, break_lvl=1100, pb_target=1075, top=1100, bot=1000,
+             rng=100, create_bar=-200, state=1, any_break=False, ptype=0,
+             origin_ts=123456, armed=True)
+    eng.plans.append(p)
+    c1 = Candle(ts=c0.ts + 1, open=1000, high=1002, low=998, close=1000, volume=1)
+    events = eng.process_candle(c1)
+    cancels = [e for e in events if e["type"] == "CANCEL"]
+    assert len(cancels) == 1
+    ev = cancels[0]
+    assert ev["origin_ts"] == 123456 and ev["ptype"] == 0 and ev["is_buy"] is True
+
+
+def test_mid_plan_arms_at_creation_in_live_mode():
+    cfg = Config()
+    eng = StrategyEngine(cfg, simulate_fills=False)
+    # 2021-01-05 is a Tuesday (allowed trade day by default).
+    tue = int(datetime(2021, 1, 5, 12, 0, tzinfo=timezone.utc).timestamp() * 1000)
+    eng.times = [tue]
+    eng.closes = [1090]   # close > mid entry (1075) -> mid plan is created
+    eng.bar_index = 0
+    events = []
+    eng._create_plans(True, 1100, 1000, 0, events)
+    mid_arms = [e for e in events if e["type"] == "ARM" and e["ptype"] == 1]
+    assert len(mid_arms) == 1
+    assert math.isclose(mid_arms[0]["entry"], 1075)
 
 
 def test_dow_name():
