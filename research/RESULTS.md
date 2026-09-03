@@ -132,10 +132,47 @@ The 1H port is mostly the same exposure, not diversification. Run 30m only
 **D) New families — all fail (documented dead ends):** failed-breakout
 fade (<53%), squeeze-expansion (<61%), first-hour-range follow/fade (<54%).
 
-## Next (round 6 plan)
-* Funding-rate data from OKX (/public/funding-rate-history): funding-extreme
-  fade, and funding filter on the flagship.
-* Candle patterns: engulfing after streaks, doji at extremes.
-* Weekend / Monday-open reversion effects.
-* Draft a production spec for the flagship (entry/exit/size rules) in case
-  the user wants it implemented as a bot module.
+## Round 6 (2026-09-03) — funding rate, candle patterns, Monday effect
+
+**A) Funding-rate strategies: inconclusive — OKX only serves ~3 months of
+funding history** (277 records, Jun–Sep 2026). Funding-extreme fade at low
+thresholds is mildly positive (59% / 22-27 trades) but the sample is too
+small and sits entirely inside the flagship's weakest season. Parked until
+more history accrues.
+
+**B) Funding filter on the flagship: unusable** — only 13 flagship trades
+fall inside the 3-month funding window.
+⚠ Honest note the window exposes: the flagship's LAST 3 MONTHS
+(Jun–Aug 2026) ran 6/13 ≈ 46% — well below the 15-month average of 79.6%.
+Small sample (13 trades), but recent regime softness is real and was
+already visible in the monthly table (Apr -2R, Jul -1R, Aug -2R).
+
+**C) Candle patterns & Monday-fade-weekend: all fail** (best 61%,
+engulfing-after-streak negative). Dead ends documented.
+
+---
+
+## PRODUCTION SPEC — "Exhaustion Fade" v1 (ready to implement on request)
+
+Instrument: BTC-USDT-SWAP · TF: 30m (closed bars only) · direction: both
+1. **Signal** on closed bar i:
+   * (high−low) > 2.5 × ATR(14)  — ATR uses Wilder smoothing
+   * LONG  if Stoch %K(14) < 10 and close < open
+   * SHORT if Stoch %K(14) > 90 and close > open
+2. **Entry**: market order at the open of bar i+1 (no limit, no retrace —
+   round 5 proved waiting loses the edge). One position at a time.
+3. **Exit**: attached TP & SL at entry ± 1500 pts (RR 1:1). No trailing,
+   no time stop.
+4. **Size**: contracts = (risk_usdt / 1500) / ctVal, floored to lot step.
+5. Expectations from 15 months of data: ~9 trades/month, 79.6% winrate,
+   +81R, max DD 5R, max 4 straight losses; weakest recent quarter ≈ 46%
+   over 13 trades — size for a 10R drawdown to be safe.
+6. Alternative profile (fewer, better trades): %K <5/>95 + 3.0×ATR,
+   dist 2500 → 84.9%, ~3.5 trades/month.
+
+## Next (round 7 plan)
+* Extend 30m history to 2024 (deep OOS — strongest remaining robustness
+  test for the flagship, including the recent-decay question).
+* Rolling 50-trade winrate curve to visualise regime drift.
+* New families: two-bar reversal, volume-climax wick, Keltner
+  re-entry-with-confirmation.
