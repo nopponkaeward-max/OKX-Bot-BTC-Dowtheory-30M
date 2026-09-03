@@ -227,9 +227,50 @@ Backward-looking gates are too laggy at ~9 trades/month.
 variant's 3.0×ATR bar requirement already embeds the volatility condition —
 explaining why it survives 2024.
 
-## Next (round 9 plan)
-* Full validation battery on the TIGHT champion: monthly curve, sides,
-  sessions, plateau (4/96, 5/95, 6/94 × 2.75-3.25×ATR), d2000-3000,
-  1H port, 1m ambiguity recheck, equity/DD.
-* Try extending 30m data into 2022-2023 (bear market) if OKX serves it —
-  the ultimate regime test.
+## Round 9 (2026-09-03) — TIGHT passes the ultimate test: 4.3 YEARS, every year >= 70%
+
+30m data extended to May 2022 (74,907 bars): bear market 2022, chop 2023,
+and the full cycle since. Cross-era tests use price-proportional distance
+(2.3% of entry price, floor 500 — still honours dist >= 500; ≈2500 pts at
+2026 prices).
+
+**A) TIGHT by year (pct 2.3%): ALL 80.3% / 142 trades / +86R**
+| 2022 | 2023 | 2024 | 2025 | 2026 |
+|------|------|------|------|------|
+| 76% | 72% | 77% | 90% | 80% |
+**Every calendar year >= 72% — bear, chop and bull alike.** Fixed-point
+distances are the wrong ruler across eras (fixed d2500 at 20k-BTC 2022 =
+12.5% of price → 44%); percent distance is the production choice.
+
+**B) Plateau (9 neighbour cells, 4.3y): all 73.7–81.7%, all profitable
+every year.** 5/95×3.25 peaks at 81.7% with every year >= 77%.
+
+**C) Quality (pct 2.3%):** equity +86R, **max drawdown 3R**, max 3 straight
+losses, LONG 81.2% / SHORT 79.5%, all sessions >= 72.9%, ambiguous bars
+3/142, avg hold ~6h, ~2.8 trades/month. Worst month in 15 months: -2R.
+
+**E) 1H port: 84.6% (13 trades — small but consistent).**
+
+---
+
+## PRODUCTION SPEC v2 — "Exhaustion Fade TIGHT" (supersedes v1)
+
+Instrument: BTC-USDT-SWAP · TF: 30m closed bars · both directions
+1. **Signal** on closed bar i:
+   * (high−low) > 3.0 × ATR(14) (Wilder)
+   * LONG  if Stoch %K(14) < 5  and close < open
+   * SHORT if Stoch %K(14) > 95 and close > open
+2. **Entry**: market at open of bar i+1. One position at a time.
+3. **Exit**: TP = SL = max(2.3% × entry price, 500 pts), RR 1:1, attached
+   orders, no trailing/time stop.
+4. **Size**: contracts = (risk_usdt / dist) / ctVal, floored to lot step.
+5. Measured over 4.3 years: 80.3% winrate, +86R, max DD 3R, ~2.8
+   trades/month, every year 72–90%, both sides & all sessions profitable,
+   pessimistic resolution (real 1m ambiguity negligible: 3/142).
+6. Fees ~0.1% notional round-trip ≈ 4% of one R at 2.3% distance.
+
+## Next (round 10 plan)
+* Fair re-test of ALL earlier families with percent-distance (the fixed-
+  point ruler may have unfairly failed some in cross-era tests).
+* Hunt a SECOND, mechanism-uncorrelated >= 70% strategy (trend/momentum
+  side) to pair with the reversal champion.
