@@ -269,8 +269,30 @@ Instrument: BTC-USDT-SWAP · TF: 30m closed bars · both directions
    pessimistic resolution (real 1m ambiguity negligible: 3/142).
 6. Fees ~0.1% notional round-trip ≈ 4% of one R at 2.3% distance.
 
-## Next (round 10 plan)
-* Fair re-test of ALL earlier families with percent-distance (the fixed-
-  point ruler may have unfairly failed some in cross-era tests).
-* Hunt a SECOND, mechanism-uncorrelated >= 70% strategy (trend/momentum
-  side) to pair with the reversal champion.
+## Round 10 (2026-09-04) — percent re-test & momentum hunt
+
+**A) Fair percent-distance re-test (4.3y): no additional family passes.**
+The loose flagship (10/90+2.5x) lands 63.9–66.3% overall and fails
+2022–2024 at 51–62% — its earlier 70%+ figures really were regime luck.
+TIGHT passes at every tested percent (1.5/2.0/2.5 → 77.5/79.6/80.1%),
+confirming it is not a distance artefact.
+
+**B) Momentum/trend hunt on 30m: the momentum side is EMPTY.**
+* strong-close continuation: 39–41% (= its fade wins ~59% — the same
+  reversal mechanism as our champion, weaker)
+* 12-bar momentum burst 43–49%, trend+pullback 52–53%,
+  50-bar volume breakout 48–50%, 3-bar thrust 49–50%
+BTC 30m at RR 1:1 is structurally mean-reverting at these horizons; no
+follow-through edge exists. A second uncorrelated strategy must come from
+a different timeframe (4H/1D) or a different mechanism (time-of-day,
+liquidation cascades) — next round.
+
+Best-in-class cell noted from round 9's plateau: **5/95 × 3.25×ATR,
+pct 2.3%: 81.7% / 126t with every year >= 77%** — a slightly stricter
+alternative to spec v2 with ~2.4 trades/month.
+
+## Next (round 11 plan)
+* Fetch deep 4H and 1D history (cheap: ~10k bars) and hunt higher-TF
+  strategies over 4+ years: MA pullback, day-of-week, weekly patterns.
+* Liquidation-cascade detection on 30m (extreme volume + wick + gap-down
+  sequence) as a possible second mechanism.
