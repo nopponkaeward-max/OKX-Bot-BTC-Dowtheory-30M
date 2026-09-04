@@ -29,3 +29,10 @@ the historical cache rather than only the last 299 bars.
 - Open trades to resolve: none.
 - New signals: **none**.
 - Running tally: 0W / 0L (0 trades since forward-test start).
+
+## Check #3 — 2026-09-04 20:2x UTC
+
+- Data: last 299 confirmed 30m bars (2026-08-29 → 2026-09-04), OKX API.
+- Price ~79,772 (roughly flat vs check #2's 79,347).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L.
