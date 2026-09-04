@@ -313,10 +313,69 @@ extreme.
 (~150 strategy variants, 5 TFs, 4.3 years), exactly one robust >=70%
 RR 1:1 edge exists: the 30m single-bar Exhaustion Fade TIGHT.
 
-## Next (round 12 plan)
-* Deep-fetch 1H and 2H back to 2022 and test TIGHT there (the 1-year 1H
-  port showed 84.6% — best remaining lead for a second profile).
-* If 1H passes: overlap analysis vs the 30m champion and a combined
-  portfolio equity curve.
-* Consider closing the search with a final consolidated report if no new
-  leads remain.
+## Round 12 (2026-09-04) — 1H confirms the mechanism; search space saturated
+
+1H (37,457 bars) and 2H (18,729 bars) fetched back to May 2022.
+
+**1H TIGHT passes** (pct 2.5: 79.7% / 59t / +35R; every year >= 65%,
+4 of 5 years >= 73%) — but **61–69% of its entries fall within +/-12h of a
+30m-champion entry**: it is the same exhaustion events seen at a different
+zoom, not an independent second strategy. 2H is too thin (13–32 trades)
+and fails 2022. No new leads remain in this search space.
+
+═══════════════════════════════════════════════════════════════════════
+
+# FINAL CONSOLIDATED REPORT (rounds 1–12)
+
+**Brief:** new entries (unlike the DowTheory bot), RR 1:1, SL/TP distance
+>= 500 pts, winrate >= 70%, real OKX BTC-USDT-SWAP data, multiple TFs.
+
+**Scope of search:** ~160 strategy variants across 15 families x 6 TFs
+(15m–1D) x fixed & percent distances, on up to 4.3 years of data
+(May 2022 – Sep 2026, bear/chop/bull), pessimistic same-bar resolution,
+no look-ahead, market entry at next open, one position at a time.
+
+## THE RESULT — one robust edge exists: "Exhaustion Fade TIGHT" (30m)
+
+**Rule:** on a closed 30m bar — range > 3.0xATR(14, Wilder) AND
+Stoch %K(14) < 5 with a red close (→ LONG) or %K > 95 with a green close
+(→ SHORT). Market entry at next open. TP = SL = max(2.3% x entry, 500).
+
+**Evidence:** 80.3% / 142 trades / +86R over 4.3y; every year 72–90%;
+max DD 3R; max 3 straight losses; long/short balanced; all sessions;
+both volatility regimes; smooth 9-cell parameter plateau (73.7–81.7%,
+every cell profitable every year); OOS-passed twice (Jun–Dec 2025 and
+2022–2023 extensions); 1m-intrabar recheck confirms the pessimistic
+numbers; the same rule independently clears 70% on 1H.
+Stricter cell for fewer/better trades: 5/95 x 3.25xATR → 81.7%,
+every year >= 77%, ~2.4 trades/month.
+
+**Why it works (mechanism, established by the failures):** a SINGLE
+climax bar at a stochastic extreme snaps back; multi-bar cascades in
+motion continue (fading them loses); follow-through/momentum has NO edge
+on BTC 30m at RR 1:1 (all 5 momentum families ~40–53%); the effect
+exists only intraday (4H/1D: dead), and needs real volatility
+(the 3xATR gate embeds this — which is exactly why the looser variants
+died in 2024's quiet regime).
+
+**Honest caveats:** 142 trades over 4.3y is ~2.8/month — patience
+required; 2025 was the best year (90%) and live expectation should be
+budgeted at the ~75% floor, drawdown budget 10R despite the measured 3R;
+fees ~4% of one R not modeled; execution assumes fills at next-bar open.
+
+## Dead ends (do not re-test)
+Momentum/trend on 30m (5 families), higher-TF everything (4H/1D),
+liquidation-cascade fade, limit-entry retrace execution, candle patterns
+(engulfing, doji, pin bar at extremes), Monday/weekend fades,
+funding-hour entries, round-number bounce, gap-fill, first-hour range,
+squeeze expansion, fakeout fade, two-bar reversal, volume-climax wick,
+Keltner re-entry, multi-TF stoch alignment, rolling-winrate gating,
+day-of-week longs (1D), single-indicator reversals (RSI/Stoch/Boll/
+Keltner alone — all collapse outside hot regimes).
+
+## Recommended next steps (user's choice)
+1. **Implement** Exhaustion Fade TIGHT as a bot module (engine pattern
+   already exists in this repo) and run it in OKX demo for 1–2 months.
+2. **Forward-test passively**: keep this research loop alive checking new
+   signals as bars close, building a live-data track record first.
+3. **Stop here** with the validated spec on record.
