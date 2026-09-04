@@ -291,8 +291,32 @@ Best-in-class cell noted from round 9's plateau: **5/95 × 3.25×ATR,
 pct 2.3%: 81.7% / 126t with every year >= 77%** — a slightly stricter
 alternative to spec v2 with ~2.4 trades/month.
 
-## Next (round 11 plan)
-* Fetch deep 4H and 1D history (cheap: ~10k bars) and hunt higher-TF
-  strategies over 4+ years: MA pullback, day-of-week, weekly patterns.
-* Liquidation-cascade detection on 30m (extreme volume + wick + gap-down
-  sequence) as a possible second mechanism.
+## Round 11 (2026-09-04) — higher TFs and cascades: all dead ends
+
+4H (9,364 bars) and 1D (1,561 bars) fetched back to May 2022.
+
+**A) Higher-TF hunt fails across the board.** The TIGHT rule almost never
+fires on 4H (5 signals in 4.3y — %K<5 + 3xATR barely coincide there) and
+its looser form is 50-64%. Daily RSI reversal is disastrous (34-42% —
+daily trends run), trend-pullback 42-51%, big-bar fade 29-50%,
+day-of-week longs 43-55%. The exhaustion edge is specifically an
+intraday-30m phenomenon.
+
+**B) Liquidation-cascade fade fails (40-47%).** Fading a 3-bar
+accelerating cascade with volume climax LOSES: cascades continue.
+Instructive contrast with the champion — a SINGLE climax bar at a
+stochastic extreme mean-reverts, but a multi-bar cascade in motion does
+not. Momentum exists mid-cascade; exhaustion only at the single-bar
+extreme.
+
+**Structural summary after 11 rounds:** in this entire search space
+(~150 strategy variants, 5 TFs, 4.3 years), exactly one robust >=70%
+RR 1:1 edge exists: the 30m single-bar Exhaustion Fade TIGHT.
+
+## Next (round 12 plan)
+* Deep-fetch 1H and 2H back to 2022 and test TIGHT there (the 1-year 1H
+  port showed 84.6% — best remaining lead for a second profile).
+* If 1H passes: overlap analysis vs the 30m champion and a combined
+  portfolio equity curve.
+* Consider closing the search with a final consolidated report if no new
+  leads remain.
