@@ -1,0 +1,847 @@
+//@version=6
+
+indicator("ExhaustionFadeTight_V1.0", shorttitle="ExhFadeTight_V1.0", overlay=true, max_boxes_count=500, max_labels_count=500, max_lines_count=500)
+
+// ==============================================================================
+// EXHAUSTION FADE TIGHT — สวนแท่ง climax ที่จุด stochastic สุดโต่ง
+//
+// Signal (บนแท่งที่ปิดแล้ว):
+//   • range แท่ง > ATR Mult × ATR(len)                      (แท่ง climax)
+//   • %K(len) < Lo และแท่งแดง  → LONG  ที่ open แท่งถัดไป
+//   • %K(len) > Hi และแท่งเขียว → SHORT ที่ open แท่งถัดไป
+// Exit: TP = SL = max(Dist% × ราคาเข้า, Floor)  (RR 1:1) — ทีละไม้
+// ผลทดสอบ OKX BTC-USDT-SWAP 30m (May2022–Sep2026, pessimistic):
+//   80.3% / 142 เทรด / +86R — ทุกปี 72–90% / max DD 3R
+// ==============================================================================
+
+// ==========================================
+// --- 1. INPUT SETTINGS ---
+// ==========================================
+
+// --- Signal ---
+stochLen = input.int(14, title="Stoch %K Length", minval=2, maxval=50, group="Signal", tooltip="ความยาว Stochastic %K (ไม่ smooth)", display=display.none)
+stochLo  = input.float(5,  title="%K Oversold (< = LONG)", minval=1, maxval=49, step=1, group="Signal", tooltip="%K ต่ำกว่าค่านี้ + แท่งแดง → เตรียม LONG\nค่าที่ validate แล้ว: 5", display=display.none)
+stochHi  = input.float(95, title="%K Overbought (> = SHORT)", minval=51, maxval=99, step=1, group="Signal", tooltip="%K สูงกว่าค่านี้ + แท่งเขียว → เตรียม SHORT\nค่าที่ validate แล้ว: 95", display=display.none)
+atrLen   = input.int(14, title="ATR Length", minval=5, maxval=50, group="Signal", display=display.none)
+atrMult  = input.float(3.0, title="Climax Bar > ATR ×", minval=1.0, maxval=6.0, step=0.25, group="Signal", tooltip="แท่งต้องมี range (high-low) มากกว่า ATR × ค่านี้ จึงนับเป็นแท่ง climax\nค่าที่ validate แล้ว: 3.0", display=display.none)
+
+// --- Exit (RR 1:1) ---
+distMode  = input.string("% of Price", title="Distance Mode", options=["% of Price", "Fixed Points"], group="Exit (TP=SL, RR 1:1)", tooltip="% of Price = ระยะ SL/TP เป็น % ของราคาเข้า (มี floor)\nFixed Points = ระยะคงที่ (หน่วยราคา)", display=display.none)
+distPct   = input.float(2.3, title=" [% of Price] Distance %", minval=0.1, maxval=10, step=0.1, group="Exit (TP=SL, RR 1:1)", tooltip="ค่าที่ validate แล้ว: 2.3–2.5", display=display.none)
+distFloor = input.float(500, title=" [% of Price] Min Distance (points)", minval=0, step=50, group="Exit (TP=SL, RR 1:1)", tooltip="ระยะขั้นต่ำ (จุด) — ระยะจริง = max(%×ราคา, ค่านี้)", display=display.none)
+distFix   = input.float(2500, title=" [Fixed] Distance (points)", minval=1, step=100, group="Exit (TP=SL, RR 1:1)", display=display.none)
+rrRatio   = input.float(1.0, title="Risk : Reward (TP = SL ×)", minval=0.1, step=0.1, group="Exit (TP=SL, RR 1:1)", tooltip="1.0 = TP ระยะเท่า SL (ค่าที่ validate แล้ว)", display=display.none)
+spreadPts = input.float(0, title="Spread (price)", minval=0, step=0.1, group="Exit (TP=SL, RR 1:1)", display=display.none)
+
+// --- Risk ---
+riskAmount    = input.float(500.0, title="Risk per 1R ($)", minval=0.01, group="Risk", display=display.none)
+pipValueRatio = input.float(100.0, title="1 Lot Ratio", group="Risk", display=display.none)
+useLtf = input.bool(true, title="Intrabar Check (Lower TF)", group="Risk", tooltip="ใช้ TF เล็กตรวจลำดับราคาในแท่งที่ TP และ SL โดนแตะพร้อมกัน\nไม่มีข้อมูล intrabar → กำกวม = นับ Loss ไว้ก่อน (pessimistic)", display=display.none)
+ltfTf  = input.timeframe("1", title=" Lower TF (เช่น 1 = 1 นาที)", group="Risk", display=display.none)
+
+// --- Display & Stats ---
+labelSizeOpt = input.string("tiny", title="Label Size", options=["tiny", "small", "normal", "large", "huge", "auto"], group="Display & Stats", display=display.none)
+string lblSz = switch labelSizeOpt
+    "tiny"   => size.tiny
+    "small"  => size.small
+    "normal" => size.normal
+    "large"  => size.large
+    "huge"   => size.huge
+    =>          size.auto
+priceFmt = input.string("#.#", title="Price Format", options=["#.#####", "#.####", "#.###", "#.##", "#.#", "#"], group="Display & Stats", display=display.none)
+
+chartTheme      = input.string("Dark", title="Chart Theme", options=["Dark", "Light"], group="Visual Style", display=display.none)
+tradeVisual     = input.string("R:R Zone", title="Trade Visual", options=["R:R Zone", "Arrows", "Both"], group="Visual Style", display=display.none)
+tpSlMarkerLen   = input.int(8, title="Trade Zone Length (bars)", minval=1, maxval=40, group="Visual Style", display=display.none)
+tpSlMarkerWidth = input.int(2, title="TP/SL Level Line Width", minval=1, maxval=10, group="Visual Style", display=display.none)
+tpSlBrightness  = input.int(0, title="TP/SL Brightness (0=สว่างสุด)", minval=0, maxval=80, step=5, group="Visual Style", display=display.none)
+showSignalMark  = input.bool(true, title="Show Signal Mark (สามเหลี่ยมที่แท่ง climax)", group="Visual Style", display=display.none)
+showEntryInfo   = input.bool(true, title="Show Entry Circle", group="Visual Style", display=display.none)
+labelOffset     = input.int(3, title="Label Offset (bars)", minval=0, maxval=30, group="Visual Style", display=display.none)
+showClosedHistory = input.bool(false, title="Show Closed Trade History (เส้นประจาง)", group="Visual Style", display=display.none)
+
+showStatsTable    = input.bool(true, title="Show Main Stats Table", group="Display & Stats", display=display.none)
+showMonthlyTable  = input.bool(true, title="Show Monthly Table (By Month)", group="Display & Stats", display=display.none)
+showDailyTable    = input.bool(false, title="Show Daily Log Table (โหมด Specific Month)", group="Display & Stats", display=display.none)
+showSettingsTable = input.bool(true, title="Show Settings Summary Table", group="Display & Stats", display=display.none)
+showDayTable      = input.bool(true, title="Show By-Day Table (Sun–Sat)", group="Display & Stats", display=display.none)
+showSun = input.bool(true,  title="  ├ Sun",  group="Display & Stats", inline="days1", display=display.none)
+showMon = input.bool(true,  title="Mon",      group="Display & Stats", inline="days1", display=display.none)
+showTue = input.bool(true,  title="Tue",      group="Display & Stats", inline="days1", display=display.none)
+showWed = input.bool(true,  title="Wed",      group="Display & Stats", inline="days2", display=display.none)
+showThu = input.bool(true,  title="Thu",      group="Display & Stats", inline="days2", display=display.none)
+showFri = input.bool(true,  title="Fri",      group="Display & Stats", inline="days2", display=display.none)
+showSat = input.bool(true,  title="Sat",      group="Display & Stats", inline="days3", display=display.none)
+int enabledDayCnt = (showSun?1:0)+(showMon?1:0)+(showTue?1:0)+(showWed?1:0)+(showThu?1:0)+(showFri?1:0)+(showSat?1:0)
+
+statMode    = input.string("2. ย้อนหลังตามจำนวนเดือน (Months)", title="▶ โหมดดูสถิติ", options=["1. ย้อนหลังตามจำนวนวัน (Days)", "2. ย้อนหลังตามจำนวนเดือน (Months)", "3. เจาะจงเดือนและปี (Specific Month)"], group="Display & Stats", display=display.none)
+statDays    = input.int(1, title="[โหมด 1] ย้อนหลัง (วัน)", minval=1, maxval=365, group="Display & Stats", display=display.none)
+statMonths  = input.int(8, title="[โหมด 2] ย้อนหลัง (เดือน)", minval=1, maxval=12, group="Display & Stats", display=display.none)
+statTargetM = input.string("August", title="[โหมด 3] ระบุเดือน", options=["January","February","March","April","May","June","July","August","September","October","November","December"], group="Display & Stats", display=display.none)
+statTargetY = input.int(0, title="[โหมด 3] ระบุปี (0 = ปีปัจจุบัน)", minval=0, maxval=2100, group="Display & Stats", display=display.none)
+
+mainTablePosStr     = input.string("Bottom Right",  title="▶ ตำแหน่งตารางหลัก (Stats)", options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Table Position", display=display.none)
+dayTablePosStr      = input.string("Middle Right",  title="▶ ตำแหน่งตาราง By-Day",       options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Table Position", display=display.none)
+monthlyTablePosStr  = input.string("Bottom Center", title="▶ ตำแหน่งตาราง Monthly",      options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Table Position", display=display.none)
+dailyTablePosStr    = input.string("Middle Left",   title="▶ ตำแหน่งตาราง Daily Log",     options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Table Position", display=display.none)
+settingsTablePosStr = input.string("Bottom Left",   title="▶ ตำแหน่งตาราง Settings",       options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Table Position", display=display.none)
+
+tz_incr      = input.int(0, title="UTC (+/-)", group="Timezone", display=display.none)
+use_exchange = input.bool(false, title="Timezone Exchange", group="Timezone", display=display.none)
+
+// ==========================================
+// --- 2. TIMEZONE, HELPERS & STATE ---
+// ==========================================
+
+var tz = use_exchange ? syminfo.timezone : str.format("UTC{0}{1}", tz_incr >= 0 ? "+" : "-", math.abs(tz_incr))
+
+f_tablePos(string s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        =>                 position.bottom_right
+
+int currentYear   = year(timenow, tz)
+int actualTargetY = statTargetY == 0 ? currentYear : statTargetY
+
+// --- Palette (โทนเดียวกับ DowTheoryBreak) ---
+bool  vDark   = chartTheme == "Dark"
+color vBull   = color.rgb(0, 210, 160)
+color vBear   = color.rgb(255, 82, 82)
+color vSig    = color.rgb(212, 175, 55)     // signal / pending (gold)
+color vEntry  = color.rgb(255, 152, 0)
+color vMuted  = vDark ? color.rgb(128, 138, 158) : color.rgb(105, 113, 132)
+color vInk    = vDark ? color.rgb(13, 17, 28) : color.rgb(250, 251, 253)
+color vInkBg  = color.new(vInk, 8)
+color vNone   = color.new(color.white, 100)
+color vDarkTx = color.rgb(13, 17, 28)
+
+// --- Result arrays (for stats) ---
+var array<bool>  resIsWin   = array.new_bool()
+var array<float> resTradeRR = array.new_float()
+var array<int>   resTime    = array.new_int()
+var array<float> resTpPts   = array.new_float()
+var array<int>   dayList    = array.new_int()
+
+int curDayId = (year(time, tz) * 10000) + (month(time, tz) * 100) + dayofmonth(time, tz)
+bool needPushDay = array.size(dayList) == 0
+if not needPushDay
+    needPushDay := array.get(dayList, array.size(dayList) - 1) != curDayId
+if needPushDay
+    array.push(dayList, curDayId)
+    if array.size(dayList) > 400
+        array.shift(dayList)
+
+// --- Drawing registries ---
+var array<line>  regLines  = array.new<line>()
+var array<label> regLabels = array.new<label>()
+var array<box>   regBoxes  = array.new<box>()
+
+regLine(line _l) =>
+    if not na(_l)
+        array.push(regLines, _l)
+        if array.size(regLines) > 480
+            line.delete(array.shift(regLines))
+
+regLabel(label _lb) =>
+    if not na(_lb)
+        array.push(regLabels, _lb)
+        if array.size(regLabels) > 480
+            label.delete(array.shift(regLabels))
+
+regBox(box _b) =>
+    if not na(_b)
+        array.push(regBoxes, _b)
+        if array.size(regBoxes) > 480
+            box.delete(array.shift(regBoxes))
+
+f_px(float _p) => str.tostring(_p, priceFmt)
+
+f_inkLabel(int _x, float _y, string _txt, string _style, color _txtCol, string _size) =>
+    label.new(x=_x, y=_y, text=_txt, style=_style, color=vInkBg, textcolor=_txtCol, size=_size, text_font_family=font.family_monospace)
+
+f_solidLabel(int _x, float _y, string _txt, string _style, color _bg, color _txtCol, string _size) =>
+    label.new(x=_x, y=_y, text=_txt, style=_style, color=_bg, textcolor=_txtCol, size=_size, text_font_family=font.family_monospace)
+
+f_priceTag(int _x, float _y, string _txt, color _col) =>
+    label.new(x=_x, y=_y, text=_txt, style=label.style_label_left, color=color.new(_col, 80), textcolor=_col, size=size.tiny, text_font_family=font.family_monospace)
+
+// ==========================================
+// --- 3. LOWER-TF INTRABAR DATA ---
+// ==========================================
+
+string ltfEff = timeframe.in_seconds(ltfTf) >= timeframe.in_seconds(timeframe.period) ? timeframe.period : ltfTf
+[ltfH, ltfL] = request.security_lower_tf(syminfo.tickerid, ltfEff, [high, low])
+
+// Which of SL/TP is touched first within this bar (market position from open)?
+// -1 = no intrabar data, 0 = neither, 1 = SL first, 2 = TP first
+f_ltfFirstHit(bool _isB, float _sl, float _tp) =>
+    int res = -1
+    if useLtf and array.size(ltfL) > 0
+        res := 0
+        for k = 0 to array.size(ltfL) - 1
+            float hk = array.get(ltfH, k)
+            float lk = array.get(ltfL, k)
+            bool hitSL = _isB ? lk <= _sl : hk >= _sl
+            bool hitTP = _isB ? hk >= _tp : lk <= _tp
+            if hitSL
+                res := 1
+                break
+            if hitTP
+                res := 2
+                break
+    res
+
+// ==========================================
+// --- 4. SIGNAL DETECTION ---
+// ==========================================
+
+float atrVal = ta.atr(atrLen)
+float kVal   = ta.stoch(close, high, low, stochLen)
+
+bool climax  = (high - low) > atrMult * atrVal
+bool sigLong  = climax and kVal < stochLo and close < open
+bool sigShort = climax and kVal > stochHi and close > open
+
+// ==========================================
+// --- 5. TRADE STATE (ทีละไม้ · entry ที่ open แท่งถัดไป) ---
+// ==========================================
+
+var int   pendingDir = 0        // +1 long / -1 short — เข้าที่ open แท่งถัดไป
+var bool  inTrade    = false
+var bool  tIsBuy     = false
+var float tEnt       = na
+var float tSL        = na
+var float tTP        = na
+var float tOneR      = na
+var float tTrr       = na
+var int   tBarIdx    = na
+var int   tOrigin    = na
+
+// active-trade drawing handles
+var line  aLnTP   = na
+var line  aLnSL   = na
+var line  aLnEnt  = na
+var box   aBoxTP  = na
+var box   aBoxSL  = na
+var label aCirc   = na
+var label aTagE   = na
+var label aTagT   = na
+var label aTagS   = na
+var label aHold   = na
+
+f_deleteActiveArt() =>
+    line.delete(aLnTP), line.delete(aLnSL), line.delete(aLnEnt)
+    box.delete(aBoxTP), box.delete(aBoxSL)
+    label.delete(aCirc), label.delete(aTagE), label.delete(aTagT), label.delete(aTagS), label.delete(aHold)
+
+f_fadeActiveArt() =>
+    color fade = color.new(vMuted, 70)
+    for ln in array.from(aLnTP, aLnSL, aLnEnt)
+        if not na(ln)
+            line.set_style(ln, line.style_dashed), line.set_color(ln, fade), line.set_width(ln, 1)
+    for bx in array.from(aBoxTP, aBoxSL)
+        if not na(bx)
+            box.set_bgcolor(bx, color.new(vMuted, 92)), box.set_border_color(bx, color.new(vMuted, 80)), box.set_border_style(bx, line.style_dashed)
+            regBox(bx)
+    for lb in array.from(aCirc, aTagE, aTagT, aTagS)
+        if not na(lb)
+            label.set_color(lb, color.new(vMuted, 90)), label.set_textcolor(lb, color.new(vMuted, 70))
+            regLabel(lb)
+    label.delete(aHold)
+    regLine(aLnTP), regLine(aLnSL), regLine(aLnEnt)
+
+// --- (1) เข้าไม้: มีสัญญาณค้างจากแท่งก่อน และไม่มีไม้เปิดตอนต้นแท่ง ---
+bool wasOpen = inTrade
+if not wasOpen and pendingDir != 0
+    bool isB = pendingDir > 0
+    float ent = open + (isB ? spreadPts : -spreadPts)
+    float dist = distMode == "% of Price" ? math.max(ent * distPct / 100, distFloor) : distFix
+    inTrade := true
+    tIsBuy  := isB
+    tEnt    := ent
+    tOneR   := dist
+    tSL     := isB ? ent - dist : ent + dist
+    tTP     := isB ? ent + dist * rrRatio : ent - dist * rrRatio
+    tTrr    := tOneR > 0 ? math.abs(tTP - tEnt) / tOneR : 0
+    tBarIdx := bar_index
+    tOrigin := time
+    float lot = tOneR > 0 ? riskAmount / (tOneR * pipValueRatio) : 0
+    alert((isB ? "BUY " : "SELL ") + "MARKET (Exhaustion Fade)\nEntry: " + f_px(ent) + "\nSL: " + f_px(tSL) + "\nTP: " + f_px(tTP) + "\nLot: " + str.tostring(lot, "#.####"), alert.freq_once_per_bar)
+    // --- trade visual ---
+    color dirCol = isB ? vBull : vBear
+    int zoneR = bar_index + tpSlMarkerLen
+    if tradeVisual != "Arrows"
+        aBoxTP := box.new(left=bar_index, top=math.max(tEnt, tTP), right=zoneR, bottom=math.min(tEnt, tTP), bgcolor=color.new(vBull, 84), border_color=color.new(vBull, 70), border_width=1)
+        aBoxSL := box.new(left=bar_index, top=math.max(tEnt, tSL), right=zoneR, bottom=math.min(tEnt, tSL), bgcolor=color.new(vBear, 84), border_color=color.new(vBear, 70), border_width=1)
+    aLnTP  := line.new(x1=bar_index, y1=tTP,  x2=zoneR, y2=tTP,  color=color.new(vBull, tpSlBrightness), width=tpSlMarkerWidth)
+    aLnSL  := line.new(x1=bar_index, y1=tSL,  x2=zoneR, y2=tSL,  color=color.new(vBear, tpSlBrightness), width=tpSlMarkerWidth)
+    aLnEnt := line.new(x1=bar_index, y1=tEnt, x2=zoneR, y2=tEnt, color=color.new(vEntry, tpSlBrightness), width=tpSlMarkerWidth)
+    aTagE := f_priceTag(zoneR, tEnt, f_px(tEnt), vEntry)
+    aTagT := f_priceTag(zoneR, tTP,  f_px(tTP),  vBull)
+    aTagS := f_priceTag(zoneR, tSL,  f_px(tSL),  vBear)
+    if showEntryInfo
+        aCirc := label.new(x=bar_index, y=tEnt, text="", style=label.style_circle, color=color.new(vEntry, 30), size=size.small)
+    aHold := f_inkLabel(bar_index + labelOffset, tEnt, "กำลังถือ " + (isB ? "BUY" : "SELL") + "\nรอผล TP/SL", label.style_label_left, vEntry, lblSz)
+pendingDir := 0
+
+// --- (2) ตรวจผลไม้ที่เปิดอยู่ (รวมแท่งที่เพิ่งเข้า — position มีตั้งแต่ open) ---
+if inTrade
+    bool hitSL = tIsBuy ? low <= tSL : high >= tSL
+    bool hitTP = tIsBuy ? high >= tTP : low <= tTP
+    bool closedWin  = false
+    bool closedLoss = false
+    if hitSL and hitTP
+        int fh = f_ltfFirstHit(tIsBuy, tSL, tTP)
+        closedWin  := fh == 2
+        closedLoss := fh != 2          // กำกวม/ไม่มีข้อมูล intrabar = Loss (pessimistic)
+    else if hitSL
+        closedLoss := true
+    else if hitTP
+        closedWin := true
+    if closedWin or closedLoss
+        float lossR   = tOneR > 0 ? -(math.abs(tEnt - tSL) / tOneR) : -1.0
+        float actualR = closedWin ? tTrr : lossR
+        array.push(resIsWin, actualR > 0)
+        array.push(resTradeRR, actualR)
+        array.push(resTime, tOrigin)
+        array.push(resTpPts, closedWin ? math.abs(tTP - tEnt) : math.abs(tSL - tEnt))
+        if array.size(resIsWin) > 5000
+            array.shift(resIsWin), array.shift(resTradeRR), array.shift(resTime), array.shift(resTpPts)
+        if closedWin
+            regLabel(f_solidLabel(bar_index + labelOffset, tTP, "WIN  +" + str.tostring(tTrr, "#.##") + "R", label.style_label_left, color.new(vBull, 5), vDarkTx, lblSz))
+        else
+            regLabel(f_solidLabel(bar_index + labelOffset, tSL, "LOSS  " + str.tostring(lossR, "#.##") + "R", label.style_label_left, color.new(vBear, 5), color.rgb(255, 255, 255), lblSz))
+        alert((closedWin ? "WIN +" : "LOSS ") + str.tostring(actualR, "#.##") + "R (Exhaustion Fade)", alert.freq_once_per_bar)
+        if showClosedHistory
+            f_fadeActiveArt()
+        else
+            f_deleteActiveArt()
+        inTrade := false
+
+// --- (3) สัญญาณใหม่ที่ close แท่งนี้ → เข้าที่ open แท่งถัดไป ---
+if sigLong or sigShort
+    pendingDir := sigLong ? 1 : -1
+    if showSignalMark
+        if sigLong
+            regLabel(label.new(x=bar_index, y=low - 10 * syminfo.mintick, text="▲", style=label.style_label_up, color=vNone, textcolor=color.new(vSig, 10), size=lblSz, text_font_family=font.family_monospace))
+        else
+            regLabel(label.new(x=bar_index, y=high + 10 * syminfo.mintick, text="▼", style=label.style_label_down, color=vNone, textcolor=color.new(vSig, 10), size=lblSz, text_font_family=font.family_monospace))
+    float estDist = distMode == "% of Price" ? math.max(close * distPct / 100, distFloor) : distFix
+    alert((sigLong ? "LONG" : "SHORT") + " SIGNAL (Exhaustion Fade)\nแท่ง climax: range " + f_px(high - low) + " > " + str.tostring(atrMult, "#.#") + "×ATR\n%K = " + str.tostring(kVal, "#.#") + "\nเข้า MARKET ที่ open แท่งถัดไป · dist ≈ " + f_px(estDist), alert.freq_once_per_bar_close)
+
+// --- update holding label ให้อยู่หน้าแท่งเทียน ---
+if not na(aHold)
+    label.set_x(aHold, bar_index + labelOffset)
+
+// ==========================================
+// --- 6. STAT PERIOD HELPERS ---
+// ==========================================
+
+int targetMonthNum = statTargetM == "January" ? 1 : statTargetM == "February" ? 2 : statTargetM == "March" ? 3 : statTargetM == "April" ? 4 : statTargetM == "May" ? 5 : statTargetM == "June" ? 6 : statTargetM == "July" ? 7 : statTargetM == "August" ? 8 : statTargetM == "September" ? 9 : statTargetM == "October" ? 10 : statTargetM == "November" ? 11 : 12
+int nDaysDraw  = math.min(statDays, array.size(dayList))
+int cutoffDraw = 0
+if array.size(dayList) > 0
+    cutoffDraw := array.get(dayList, array.size(dayList) - nDaysDraw)
+int currentTotalM = year(timenow, tz) * 12 + month(timenow, tz)
+
+// ==========================================
+// --- 7. LUXE TABLE THEME ---
+// ==========================================
+
+color lxGold    = color.rgb(212, 175, 55)
+color lxTitleTx = color.rgb(236, 210, 140)
+color lxHeadBg  = color.new(color.rgb(26, 32, 52), 6)
+color lxSubBg   = color.new(color.rgb(19, 24, 40), 8)
+color lxColHd   = color.rgb(150, 160, 182)
+color lxRowA    = color.new(color.rgb(13, 17, 28), 14)
+color lxRowB    = color.new(color.rgb(22, 28, 46), 14)
+color lxRowDim  = color.new(color.rgb(13, 17, 28), 52)
+color lxText    = color.rgb(233, 236, 243)
+color lxMuted   = color.rgb(128, 138, 158)
+color lxDimTx   = color.rgb(90, 98, 116)
+color lxGreen   = color.rgb(64, 216, 158)
+color lxRed     = color.rgb(250, 118, 118)
+color lxAmber   = color.rgb(251, 191, 36)
+color lxCyan    = color.rgb(102, 208, 255)
+color lxFrame   = color.new(lxGold, 42)
+color lxGrid    = color.new(color.rgb(7, 10, 17), 35)
+color lxBestBg  = color.new(lxGold, 84)
+
+f_wrBar(float pct) =>
+    string s = ""
+    int filled = na(pct) ? 0 : math.min(10, math.max(0, math.round(pct / 10)))
+    for _b = 1 to 10
+        s += _b <= filled ? "▰" : "▱"
+    s
+
+f_monthShort(int m) =>
+    switch m
+        1  => "Jan"
+        2  => "Feb"
+        3  => "Mar"
+        4  => "Apr"
+        5  => "May"
+        6  => "Jun"
+        7  => "Jul"
+        8  => "Aug"
+        9  => "Sep"
+        10 => "Oct"
+        11 => "Nov"
+        =>    "Dec"
+
+var table statsTable        = table.new(f_tablePos(mainTablePosStr),     2, 15,              bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+var table dayStatsTable     = table.new(f_tablePos(dayTablePosStr),      4, 3 + enabledDayCnt, bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+var table monthlyStatsTable = table.new(f_tablePos(monthlyTablePosStr),  5, statMonths + 3,   bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+var table dailyStatsTable   = table.new(f_tablePos(dailyTablePosStr),    6, 34,               bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+var table settingsTable     = table.new(f_tablePos(settingsTablePosStr), 2, 14,               bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+
+// ==========================================
+// --- 8. MAIN STATS + BY-DAY TABLE ---
+// ==========================================
+
+f_drawStatsTables() =>
+    var bool merged1 = false
+    var bool merged2 = false
+    int   winCnt  = 0
+    int   lossCnt = 0
+    int   streak     = 0
+    int   maxW       = 0
+    int   maxL       = 0
+    int   curStreakStart = 0
+    int   maxWStart  = 0
+    int   maxWEnd    = 0
+    int   maxLStart  = 0
+    int   maxLEnd    = 0
+    float netR       = 0.0
+    float curWinSum  = 0.0
+    float curLossSum = 0.0
+    float maxWinR    = 0.0
+    float maxLossR   = 0.0
+    float curWinPips  = 0.0
+    float curLossPips = 0.0
+    float maxWinPips  = 0.0
+    float maxLossPips = 0.0
+    int[]   dowWin  = array.new_int(8, 0)
+    int[]   dowLoss = array.new_int(8, 0)
+    float[] dowNetR = array.new_float(8, 0.0)
+    if array.size(resIsWin) > 0
+        for i = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, i)
+            int tDayId = (year(t, tz) * 10000) + (month(t, tz) * 100) + dayofmonth(t, tz)
+            bool valid = false
+            if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+                valid := tDayId >= cutoffDraw
+            else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+                valid := (year(t, tz) * 12 + month(t, tz)) >= (currentTotalM - statMonths + 1)
+            else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+                valid := month(t, tz) == targetMonthNum and year(t, tz) == actualTargetY
+            if valid
+                float tradeR = array.get(resTradeRR, i)
+                bool  isWin  = array.get(resIsWin, i)
+                float tPips  = array.get(resTpPts, i)
+                int   dow    = dayofweek(t, tz)
+                netR += tradeR
+                if streak == 0
+                    curStreakStart := t
+                if isWin
+                    winCnt += 1
+                    curWinSum  := streak >= 0 ? curWinSum + tradeR : tradeR
+                    curWinPips := streak >= 0 ? curWinPips + tPips : tPips
+                    if streak < 0
+                        curStreakStart := t
+                    streak := streak >= 0 ? streak + 1 : 1
+                    if streak > maxW
+                        maxW      := streak
+                        maxWStart := curStreakStart
+                        maxWEnd   := t
+                    maxWinR    := math.max(maxWinR, curWinSum)
+                    maxWinPips := math.max(maxWinPips, curWinPips)
+                    if dow >= 1 and dow <= 7
+                        array.set(dowWin,  dow, array.get(dowWin,  dow) + 1)
+                        array.set(dowNetR, dow, array.get(dowNetR, dow) + tradeR)
+                else
+                    lossCnt += 1
+                    curLossSum  := streak <= 0 ? curLossSum + tradeR : tradeR
+                    curLossPips := streak <= 0 ? curLossPips - tPips : -tPips
+                    if streak > 0
+                        curStreakStart := t
+                    streak := streak <= 0 ? streak - 1 : -1
+                    if -streak > maxL
+                        maxL      := -streak
+                        maxLStart := curStreakStart
+                        maxLEnd   := t
+                    maxLossR    := math.min(maxLossR, curLossSum)
+                    maxLossPips := math.min(maxLossPips, curLossPips)
+                    if dow >= 1 and dow <= 7
+                        array.set(dowLoss, dow, array.get(dowLoss, dow) + 1)
+                        array.set(dowNetR, dow, array.get(dowNetR, dow) + tradeR)
+    int   totalCnt  = winCnt + lossCnt
+    float wr        = totalCnt > 0 ? (winCnt / totalCnt) * 100 : na
+    color wrColor   = na(wr) ? lxMuted : wr >= 70 ? lxGreen : wr >= 50 ? lxAmber : lxRed
+    color netRColor = totalCnt == 0 ? lxMuted : netR > 0 ? lxGreen : netR < 0 ? lxRed : lxAmber
+    string netRStr  = totalCnt == 0 ? "-" : (netR > 0 ? "+" : "") + str.tostring(netR, "#.##") + "R"
+    string streakStr   = streak > 0 ? "W" + str.tostring(streak) : streak < 0 ? "L" + str.tostring(-streak) : "-"
+    color  streakColor = streak > 0 ? lxGreen : streak < 0 ? lxRed : lxMuted
+    string periodStr = ""
+    if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+        periodStr := "Last " + str.tostring(statDays) + " Days"
+    else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+        periodStr := "Last " + str.tostring(statMonths) + " Months"
+    else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+        periodStr := statTargetM + " " + str.tostring(actualTargetY)
+    string sDistTxt = distMode == "% of Price" ? str.tostring(distPct, "#.#") + "% ≥" + str.tostring(distFloor, "#") : str.tostring(distFix, "#") + " pts"
+    table.cell(statsTable, 0, 0,  "◆  EXHAUSTION FADE TIGHT", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(statsTable, 0, 1,  periodStr + "  ·  R:R 1:" + str.tostring(rrRatio, "#.#"), text_color=lxMuted, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(statsTable, 0, 2,  "Signal",   text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 2,  "%K<" + str.tostring(stochLo, "#") + "/>"+ str.tostring(stochHi, "#") + " · " + str.tostring(atrMult, "#.##") + "×ATR", text_color=lxCyan, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 3,  "Distance", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 3,  sDistTxt,   text_color=lxText, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 4,  "Entry",    text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 4,  "Market · Next Open", text_color=lxText, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 5,  "Trades",   text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 5,  totalCnt == 0 ? "-" : str.tostring(winCnt) + "W · " + str.tostring(lossCnt) + "L", text_color=lxText, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 6,  "Winrate",  text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 6,  na(wr) ? "-" : str.tostring(wr, "#.#") + "%\n" + f_wrBar(wr), text_color=wrColor, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 7,  "Net R",    text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 7,  netRStr,    text_color=netRColor, text_size=size.normal, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 8,  "Max Streak", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 8,  "W" + str.tostring(maxW) + " · L" + str.tostring(maxL), text_color=lxAmber, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    string maxWDateStr = maxW > 0 ? str.tostring(dayofmonth(maxWStart, tz)) + " " + f_monthShort(month(maxWStart, tz)) + " – " + str.tostring(dayofmonth(maxWEnd, tz)) + " " + f_monthShort(month(maxWEnd, tz)) : "-"
+    string maxLDateStr = maxL > 0 ? str.tostring(dayofmonth(maxLStart, tz)) + " " + f_monthShort(month(maxLStart, tz)) + " – " + str.tostring(dayofmonth(maxLEnd, tz)) + " " + f_monthShort(month(maxLEnd, tz)) : "-"
+    table.cell(statsTable, 0, 9,  " W" + str.tostring(maxW) + " Date", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 9,  maxWDateStr, text_color=maxW > 0 ? lxGreen : lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 10, " L" + str.tostring(maxL) + " Date", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 10, maxLDateStr, text_color=maxL > 0 ? lxRed : lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 11, "Max Streak R", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 11, totalCnt == 0 ? "-" : "+" + str.tostring(maxWinR, "#.##") + "R · " + str.tostring(maxLossR, "#.##") + "R", text_color=lxAmber, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 12, "Max Streak P", text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 12, totalCnt == 0 ? "-" : "+" + str.tostring(maxWinPips, "#.#") + "p · " + str.tostring(maxLossPips, "#.#") + "p", text_color=lxAmber, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 13, "Streak",   text_color=lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 13, streakStr,  text_color=streakColor, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 14, "Active",   text_color=lxDimTx, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 14, inTrade ? "1 open" : pendingDir != 0 ? "pending" : "flat", text_color=lxAmber, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_right)
+    if not merged1
+        merged1 := true
+        table.merge_cells(statsTable, 0, 0, 1, 0)
+        table.merge_cells(statsTable, 0, 1, 1, 1)
+    // --- BY DAY (Sun-Sat) ---
+    if showDayTable
+        table.cell(dayStatsTable, 0, 0, "◆  BY DAY  ·  " + periodStr, text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+        table.cell(dayStatsTable, 0, 1, "DAY",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+        table.cell(dayStatsTable, 1, 1, "W-L",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+        table.cell(dayStatsTable, 2, 1, "WR%",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+        table.cell(dayStatsTable, 3, 1, "NET R", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+        bool[] showDayArr = array.from(showSun, showMon, showTue, showWed, showThu, showFri, showSat)
+        int   bestDow = 0
+        float bestNR  = 0.0
+        for bd = 0 to 6
+            int bDow = bd + 1
+            if array.get(showDayArr, bd) and array.get(dowWin, bDow) + array.get(dowLoss, bDow) > 0 and array.get(dowNetR, bDow) > bestNR
+                bestNR  := array.get(dowNetR, bDow)
+                bestDow := bDow
+        int   sumW   = 0
+        int   sumL   = 0
+        float sumR   = 0.0
+        int   rowIdx = 2
+        for d = 0 to 6
+            int dow = d + 1
+            if array.get(showDayArr, d)
+                int   dw   = array.get(dowWin,  dow)
+                int   dl   = array.get(dowLoss, dow)
+                float dnr  = array.get(dowNetR, dow)
+                int   dtot = dw + dl
+                float dwr  = dtot > 0 ? (dw / dtot) * 100.0 : na
+                color dwrC = na(dwr) ? lxDimTx : dwr >= 50 ? lxGreen : lxAmber
+                color dnrC = dtot == 0 ? lxDimTx : dnr > 0 ? lxGreen : dnr < 0 ? lxRed : lxAmber
+                string dName = d == 0 ? "Sun" : d == 1 ? "Mon" : d == 2 ? "Tue" : d == 3 ? "Wed" : d == 4 ? "Thu" : d == 5 ? "Fri" : "Sat"
+                string dwlS  = dtot == 0 ? "-" : str.tostring(dw) + "W · " + str.tostring(dl) + "L"
+                string dwrS  = na(dwr) ? "-" : str.tostring(dwr, "#.#") + "%"
+                string dnrS  = dtot == 0 ? "-" : (dnr >= 0 ? "+" : "") + str.tostring(dnr, "#.##") + "R"
+                bool  isBest = dow == bestDow and dtot > 0
+                color rowBg  = isBest ? lxBestBg : rowIdx % 2 == 0 ? lxRowA : lxRowB
+                color dnameC = isBest ? lxTitleTx : dtot == 0 ? lxDimTx : lxText
+                table.cell(dayStatsTable, 0, rowIdx, (isBest ? "★ " : "") + dName, text_color=dnameC, text_size=size.small, bgcolor=rowBg, text_halign=text.align_left)
+                table.cell(dayStatsTable, 1, rowIdx, dwlS, text_color=dtot == 0 ? lxDimTx : lxText, text_size=size.small, bgcolor=rowBg)
+                table.cell(dayStatsTable, 2, rowIdx, dwrS, text_color=dwrC, text_size=size.small, bgcolor=rowBg)
+                table.cell(dayStatsTable, 3, rowIdx, dnrS, text_color=dnrC, text_size=size.small, bgcolor=rowBg, text_halign=text.align_right)
+                sumW   += dw
+                sumL   += dl
+                sumR   += dnr
+                rowIdx += 1
+        int   sumTot = sumW + sumL
+        float sumWR  = sumTot > 0 ? (sumW / sumTot) * 100.0 : na
+        table.cell(dayStatsTable, 0, rowIdx, "TOTAL", text_color=lxTitleTx, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+        table.cell(dayStatsTable, 1, rowIdx, sumTot == 0 ? "-" : str.tostring(sumW) + "W · " + str.tostring(sumL) + "L", text_color=lxText, text_size=size.tiny, bgcolor=lxHeadBg)
+        table.cell(dayStatsTable, 2, rowIdx, na(sumWR) ? "-" : str.tostring(sumWR, "#.#") + "%", text_color=na(sumWR) ? lxDimTx : sumWR >= 50 ? lxGreen : lxAmber, text_size=size.tiny, bgcolor=lxHeadBg)
+        table.cell(dayStatsTable, 3, rowIdx, sumTot == 0 ? "-" : (sumR >= 0 ? "+" : "") + str.tostring(sumR, "#.##") + "R", text_color=sumTot == 0 ? lxDimTx : sumR > 0 ? lxGreen : sumR < 0 ? lxRed : lxAmber, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+        if not merged2
+            merged2 := true
+            table.merge_cells(dayStatsTable, 0, 0, 3, 0)
+
+if showStatsTable and barstate.islast
+    f_drawStatsTables()
+
+// ==========================================
+// --- 9. MONTHLY TABLE ---
+// ==========================================
+
+f_drawMonthlyTable() =>
+    var bool merged4 = false
+    int startTotalM = currentTotalM - statMonths + 1
+    int[]   mWin    = array.new_int(statMonths, 0)
+    int[]   mLoss   = array.new_int(statMonths, 0)
+    float[] mNetR   = array.new_float(statMonths, 0.0)
+    int[]   mMaxW   = array.new_int(statMonths, 0)
+    int[]   mMaxL   = array.new_int(statMonths, 0)
+    int[]   mStreak = array.new_int(statMonths, 0)
+    if array.size(resIsWin) > 0
+        for i = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, i)
+            int tTotalM = year(t, tz) * 12 + month(t, tz)
+            int idx = tTotalM - startTotalM
+            if idx >= 0 and idx < statMonths
+                float tradeR = array.get(resTradeRR, i)
+                bool isWin = array.get(resIsWin, i)
+                int curStrk = array.get(mStreak, idx)
+                if isWin
+                    array.set(mWin, idx, array.get(mWin, idx) + 1)
+                    curStrk := curStrk >= 0 ? curStrk + 1 : 1
+                    array.set(mMaxW, idx, math.max(array.get(mMaxW, idx), curStrk))
+                else
+                    array.set(mLoss, idx, array.get(mLoss, idx) + 1)
+                    curStrk := curStrk <= 0 ? curStrk - 1 : -1
+                    array.set(mMaxL, idx, math.max(array.get(mMaxL, idx), -curStrk))
+                array.set(mStreak, idx, curStrk)
+                array.set(mNetR, idx, array.get(mNetR, idx) + tradeR)
+    table.cell(monthlyStatsTable, 0, 0, "◆  MONTHLY  ·  Last " + str.tostring(statMonths) + " Months", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 0, 1, "MONTH",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 1, 1, "W-L",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 2, 1, "WR%",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 3, 1, "NET R",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 4, 1, "STREAK", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    int bestMIdx = -1
+    float bestMNR = 0.0
+    for m = 0 to statMonths - 1
+        if (array.get(mWin, m) + array.get(mLoss, m)) > 0 and array.get(mNetR, m) > bestMNR
+            bestMNR := array.get(mNetR, m)
+            bestMIdx := m
+    int mSumW = 0
+    int mSumL = 0
+    float mSumR = 0.0
+    for m = 0 to statMonths - 1
+        int totalM = startTotalM + m
+        int mMon = (totalM - 1) % 12 + 1
+        int mYr  = math.round((totalM - mMon) / 12)
+        string mLabel = f_monthShort(mMon) + " " + str.tostring(mYr)
+        int mw = array.get(mWin, m)
+        int ml = array.get(mLoss, m)
+        float mnr = array.get(mNetR, m)
+        int mtot = mw + ml
+        float mwr = mtot > 0 ? (mw * 1.0 / mtot) * 100.0 : na
+        color mwrC = na(mwr) ? lxDimTx : mwr >= 50 ? lxGreen : lxAmber
+        color mnrC = mtot == 0 ? lxDimTx : mnr > 0 ? lxGreen : mnr < 0 ? lxRed : lxAmber
+        string mwlS = mtot == 0 ? "-" : str.tostring(mw) + "W · " + str.tostring(ml) + "L"
+        string mwrS = na(mwr) ? "-" : str.tostring(mwr, "#.#") + "%"
+        string mnrS = mtot == 0 ? "-" : (mnr >= 0 ? "+" : "") + str.tostring(mnr, "#.##") + "R"
+        bool isBestM = m == bestMIdx and mtot > 0
+        color mRowBg = isBestM ? lxBestBg : m % 2 == 0 ? lxRowA : lxRowB
+        color mLabelC = isBestM ? lxTitleTx : mtot == 0 ? lxDimTx : lxText
+        int mmxW = array.get(mMaxW, m)
+        int mmxL = array.get(mMaxL, m)
+        string mStrkS = mtot == 0 ? "-" : "W" + str.tostring(mmxW) + " · L" + str.tostring(mmxL)
+        table.cell(monthlyStatsTable, 0, m + 2, (isBestM ? "★ " : "") + mLabel, text_color=mLabelC, text_size=size.small, bgcolor=mRowBg, text_halign=text.align_left)
+        table.cell(monthlyStatsTable, 1, m + 2, mwlS, text_color=mtot == 0 ? lxDimTx : lxText, text_size=size.small, bgcolor=mRowBg)
+        table.cell(monthlyStatsTable, 2, m + 2, mwrS, text_color=mwrC, text_size=size.small, bgcolor=mRowBg)
+        table.cell(monthlyStatsTable, 3, m + 2, mnrS, text_color=mnrC, text_size=size.small, bgcolor=mRowBg, text_halign=text.align_right)
+        table.cell(monthlyStatsTable, 4, m + 2, mStrkS, text_color=mtot == 0 ? lxDimTx : lxAmber, text_size=size.small, bgcolor=mRowBg)
+        mSumW += mw
+        mSumL += ml
+        mSumR += mnr
+    int mSumTot = mSumW + mSumL
+    float mSumWR = mSumTot > 0 ? (mSumW * 1.0 / mSumTot) * 100.0 : na
+    color mSumWRC = na(mSumWR) ? lxDimTx : mSumWR >= 50 ? lxGreen : lxAmber
+    color mSumNRC = mSumTot == 0 ? lxDimTx : mSumR > 0 ? lxGreen : mSumR < 0 ? lxRed : lxAmber
+    string mSumWLS = mSumTot == 0 ? "-" : str.tostring(mSumW) + "W · " + str.tostring(mSumL) + "L"
+    string mSumWRS = na(mSumWR) ? "-" : str.tostring(mSumWR, "#.#") + "%"
+    string mSumNRS = mSumTot == 0 ? "-" : (mSumR >= 0 ? "+" : "") + str.tostring(mSumR, "#.##") + "R"
+    int totalRow = statMonths + 2
+    int allMaxW = 0
+    int allMaxL = 0
+    for sm = 0 to statMonths - 1
+        allMaxW := math.max(allMaxW, array.get(mMaxW, sm))
+        allMaxL := math.max(allMaxL, array.get(mMaxL, sm))
+    string allStrkS = mSumTot == 0 ? "-" : "W" + str.tostring(allMaxW) + " · L" + str.tostring(allMaxL)
+    table.cell(monthlyStatsTable, 0, totalRow, "TOTAL", text_color=lxTitleTx, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    table.cell(monthlyStatsTable, 1, totalRow, mSumWLS, text_color=lxText, text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 2, totalRow, mSumWRS, text_color=mSumWRC, text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 3, totalRow, mSumNRS, text_color=mSumNRC, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(monthlyStatsTable, 4, totalRow, allStrkS, text_color=mSumTot == 0 ? lxDimTx : lxAmber, text_size=size.tiny, bgcolor=lxHeadBg)
+    if not merged4
+        merged4 := true
+        table.merge_cells(monthlyStatsTable, 0, 0, 4, 0)
+
+if showMonthlyTable and barstate.islast and statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+    f_drawMonthlyTable()
+
+// ==========================================
+// --- 10. DAILY LOG TABLE (Specific Month) ---
+// ==========================================
+
+f_drawDailyTable() =>
+    var bool merged3 = false
+    int[]    ddWin      = array.new_int(32, 0)
+    int[]    ddLoss     = array.new_int(32, 0)
+    float[]  ddNetR     = array.new_float(32, 0.0)
+    float[]  ddWinPips  = array.new_float(32, 0.0)
+    float[]  ddLossPips = array.new_float(32, 0.0)
+    string[] ddTradeStr = array.new_string(32, "")
+    if array.size(resIsWin) > 0
+        for k = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, k)
+            if month(t, tz) == targetMonthNum and year(t, tz) == actualTargetY
+                int   d      = dayofmonth(t, tz)
+                bool  isWin  = array.get(resIsWin,   k)
+                float tradeR = array.get(resTradeRR, k)
+                float tpPts  = array.get(resTpPts,   k)
+                if d >= 1 and d <= 31
+                    if isWin
+                        array.set(ddWin,  d, array.get(ddWin,  d) + 1)
+                        array.set(ddWinPips, d, array.get(ddWinPips, d) + tpPts)
+                    else
+                        array.set(ddLoss, d, array.get(ddLoss, d) + 1)
+                        array.set(ddLossPips, d, array.get(ddLossPips, d) + tpPts)
+                    array.set(ddNetR, d, array.get(ddNetR, d) + tradeR)
+                    string rSign     = tradeR >= 0 ? "+" : ""
+                    string tradeLine = "TP " + rSign + str.tostring(tradeR, "#.##") + "R\n"
+                    array.set(ddTradeStr, d, array.get(ddTradeStr, d) + tradeLine)
+    table.cell(dailyStatsTable, 0, 0, "◆  DAILY LOG  ·  " + statTargetM + " " + str.tostring(actualTargetY), text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 0, 1, "DATE",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 1, 1, "W-L",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 2, 1, "WR%",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 3, 1, "NET R",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 4, 1, "PIPS",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 5, 1, "TRADES", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    int   totW = 0
+    int   totL = 0
+    float totR = 0.0
+    float totWinPips  = 0.0
+    float totLossPips = 0.0
+    for d = 1 to 31
+        int   dw   = array.get(ddWin,  d)
+        int   dl   = array.get(ddLoss, d)
+        float dnr  = array.get(ddNetR, d)
+        float dwp  = array.get(ddWinPips,  d)
+        float dlp  = array.get(ddLossPips, d)
+        int   dtot = dw + dl
+        float dwr  = dtot > 0 ? (dw / dtot) * 100.0 : na
+        color dwrC = na(dwr) ? lxDimTx : dwr >= 50.0 ? lxGreen : lxAmber
+        color dnrC = dtot == 0 ? lxDimTx : dnr > 0 ? lxGreen : dnr < 0 ? lxRed : lxAmber
+        string dwlS  = dtot == 0 ? "-" : str.tostring(dw) + "W · " + str.tostring(dl) + "L"
+        string dwrS  = na(dwr) ? "-" : str.tostring(dwr, "#.#") + "%"
+        string dnrS  = dtot == 0 ? "-" : (dnr >= 0 ? "+" : "") + str.tostring(dnr, "#.##") + "R"
+        string dpipS = dtot == 0 ? "-" : "+" + str.tostring(dwp, "#.#") + " / -" + str.tostring(dlp, "#.#")
+        color  dpipC = dtot == 0 ? lxDimTx : (dwp - dlp) > 0 ? lxGreen : (dwp - dlp) < 0 ? lxRed : lxAmber
+        string tradeS = array.get(ddTradeStr, d)
+        if str.length(tradeS) > 0
+            tradeS := str.substring(tradeS, 0, str.length(tradeS) - 1)
+        color dayBg = dtot == 0 ? lxRowDim : d % 2 == 1 ? lxRowA : lxRowB
+        color dateC = dtot == 0 ? lxDimTx : lxText
+        table.cell(dailyStatsTable, 0, d + 1, str.tostring(d), text_color=dateC, text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 1, d + 1, dwlS,   text_color=dateC, text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 2, d + 1, dwrS,   text_color=dwrC,  text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 3, d + 1, dnrS,   text_color=dnrC,  text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_right)
+        table.cell(dailyStatsTable, 4, d + 1, dpipS,  text_color=dpipC, text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_right)
+        table.cell(dailyStatsTable, 5, d + 1, tradeS, text_color=color.new(lxText, 22), text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_left)
+        totW += dw
+        totL += dl
+        totR += dnr
+        totWinPips  += dwp
+        totLossPips += dlp
+    int   totTot = totW + totL
+    float totWR  = totTot > 0 ? (totW / totTot) * 100.0 : na
+    color totWRC = na(totWR) ? lxDimTx : totWR >= 50 ? lxGreen : lxAmber
+    color totNRC = totTot == 0 ? lxDimTx : totR > 0 ? lxGreen : totR < 0 ? lxRed : lxAmber
+    string totWLS = totTot == 0 ? "-" : str.tostring(totW) + "W · " + str.tostring(totL) + "L"
+    string totWRS = na(totWR) ? "-" : str.tostring(totWR, "#.#") + "%"
+    string totNRS = totTot == 0 ? "-" : (totR >= 0 ? "+" : "") + str.tostring(totR, "#.##") + "R"
+    string totPipS = totTot == 0 ? "-" : "+" + str.tostring(totWinPips, "#.#") + " / -" + str.tostring(totLossPips, "#.#")
+    color  totPipC = totTot == 0 ? lxDimTx : (totWinPips - totLossPips) > 0 ? lxGreen : (totWinPips - totLossPips) < 0 ? lxRed : lxAmber
+    table.cell(dailyStatsTable, 0, 33, "TOTAL", text_color=lxTitleTx, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    table.cell(dailyStatsTable, 1, 33, totWLS,  text_color=lxText,    text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 2, 33, totWRS,  text_color=totWRC,    text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 3, 33, totNRS,  text_color=totNRC,    text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(dailyStatsTable, 4, 33, totPipS, text_color=totPipC,   text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(dailyStatsTable, 5, 33, na(totWR) ? "" : f_wrBar(totWR), text_color=totWRC, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    if not merged3
+        merged3 := true
+        table.merge_cells(dailyStatsTable, 0, 0, 5, 0)
+
+if showDailyTable and barstate.islast and statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+    f_drawDailyTable()
+
+// ==========================================
+// --- 11. SETTINGS SUMMARY TABLE ---
+// ==========================================
+
+f_drawSettingsTable() =>
+    var bool merged5 = false
+    table.clear(settingsTable, 0, 0, 1, 13)
+    int rowIdx = 0
+    table.cell(settingsTable, 0, rowIdx, "◆  SETTINGS SUMMARY", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(settingsTable, 1, rowIdx, "",                    text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    rowIdx += 1
+    color rowBg = lxRowA
+    // Signal
+    table.cell(settingsTable, 0, rowIdx, "─── Signal ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Mode", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "Exhaustion Fade", text_color=lxCyan, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Stoch %K", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, str.tostring(stochLen) + " · <" + str.tostring(stochLo, "#") + " / >" + str.tostring(stochHi, "#"), text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Climax Bar", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "range > " + str.tostring(atrMult, "#.##") + " × ATR(" + str.tostring(atrLen) + ")", text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Entry", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "Market · Next Open", text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    // Risk
+    table.cell(settingsTable, 0, rowIdx, "─── Risk ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    string sDist = distMode == "% of Price" ? str.tostring(distPct, "#.#") + "% ≥ " + str.tostring(distFloor, "#") + "p" : str.tostring(distFix, "#") + " pts"
+    table.cell(settingsTable, 0, rowIdx, "TP = SL", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, sDist, text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Risk / R:R", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "$" + str.tostring(riskAmount, "#") + " · 1:" + str.tostring(rrRatio, "#.#"), text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Intrabar Chk", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, useLtf ? "ON · TF " + ltfTf : "OFF (pessimistic)", text_color=useLtf ? lxGreen : lxAmber, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    if spreadPts > 0
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Spread", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, str.tostring(spreadPts, "#.#####"), text_color=lxAmber, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if not merged5
+        merged5 := true
+        table.merge_cells(settingsTable, 0, 0, 1, 0)
+
+if showSettingsTable and barstate.islast
+    f_drawSettingsTable()
