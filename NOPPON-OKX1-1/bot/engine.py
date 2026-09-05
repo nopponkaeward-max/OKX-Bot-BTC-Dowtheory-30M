@@ -105,6 +105,17 @@ class ClosedTrade:
 
 
 @dataclass
+class Deferred2nd:
+    """Stored when Order-1 hits SL but Order-2 (addon) is still open.
+    Order-3 arms only after Order-2 also closes with SL."""
+    is_buy: bool
+    entry: float
+    ses_range: float
+    ses_name: str
+    orig_entry: float
+
+
+@dataclass
 class SessionRuntime:
     name: str
     active: bool = False
@@ -180,6 +191,7 @@ class StrategyEngine:
         self.trades: List[OpenTrade] = []
         self.second_pending: List[SecondPending] = []
         self.addon_pending: List[AddonPending] = []
+        self.deferred_2nd: List[Deferred2nd] = []
         self.closed: List[ClosedTrade] = []
 
         self._oco_counter = 0
@@ -306,10 +318,12 @@ class StrategyEngine:
                                    "oco_id": p.oco_id, "entry": p.entry})
                 i -= 1
 
-        # Cancel 2nd order pending
+        # Cancel 2nd order pending + deferred
         if self.s.use_2nd_order:
             self.second_pending = [
                 sp for sp in self.second_pending if sp.ses_name != name]
+            self.deferred_2nd = [
+                d for d in self.deferred_2nd if d.ses_name != name]
 
         # Cancel add-on pending
         if self.s.use_addon_50:
@@ -696,7 +710,7 @@ class StrategyEngine:
                                "r": actual_r, "entry": t.entry,
                                "close_px": t.tp if closed_win else t.sl})
 
-                # Add-on TP flag: mark parent main
+                # Add-on TP flag: mark parent main + cancel deferred 2nd
                 if t.is_addon and closed_win:
                     for mt in self.trades:
                         if (not mt.is_2nd and not mt.is_addon and
@@ -705,14 +719,45 @@ class StrategyEngine:
                                 mt.orig_entry == t.orig_entry):
                             mt.addon_tpd = True
                             break
+                    self.deferred_2nd = [
+                        d for d in self.deferred_2nd
+                        if not (d.is_buy == t.is_buy and
+                                d.ses_name == t.ses_name and
+                                d.orig_entry == t.orig_entry)]
 
-                # 2nd order pending on main SL
+                # Order-3 arming: requires both Order-1 AND Order-2 to SL
                 if (self.s.use_2nd_order and not t.is_2nd and not t.is_addon and
                         closed_loss and not is_trail_stop and not t.addon_tpd):
-                    self.second_pending.append(SecondPending(
-                        is_buy=t.is_buy, entry=t.entry, ses_range=t.ses_range,
-                        ses_name=t.ses_name, origin_ts=candle.ts,
-                        orig_entry=t.orig_entry))
+                    addon_open = any(
+                        at for at in self.trades
+                        if at.is_addon and at.ses_name == t.ses_name and
+                        at.is_buy == t.is_buy and at.orig_entry == t.orig_entry)
+                    if addon_open:
+                        self.deferred_2nd.append(Deferred2nd(
+                            is_buy=t.is_buy, entry=t.entry,
+                            ses_range=t.ses_range, ses_name=t.ses_name,
+                            orig_entry=t.orig_entry))
+                    else:
+                        self.second_pending.append(SecondPending(
+                            is_buy=t.is_buy, entry=t.entry,
+                            ses_range=t.ses_range, ses_name=t.ses_name,
+                            origin_ts=candle.ts, orig_entry=t.orig_entry))
+
+                # Order-2 (addon) SL → check deferred, arm Order-3
+                if t.is_addon and closed_loss and self.s.use_2nd_order:
+                    j = len(self.deferred_2nd) - 1
+                    while j >= 0:
+                        d = self.deferred_2nd[j]
+                        if (d.is_buy == t.is_buy and
+                                d.ses_name == t.ses_name and
+                                d.orig_entry == t.orig_entry):
+                            self.second_pending.append(SecondPending(
+                                is_buy=d.is_buy, entry=d.entry,
+                                ses_range=d.ses_range, ses_name=d.ses_name,
+                                origin_ts=candle.ts, orig_entry=d.orig_entry))
+                            self.deferred_2nd.pop(j)
+                            break
+                        j -= 1
 
                 # Cancel linked add-on pending if main closed
                 if not t.is_2nd and not t.is_addon:
@@ -735,6 +780,7 @@ class StrategyEngine:
             "trades": [asdict(t) for t in self.trades],
             "second_pending": [asdict(s) for s in self.second_pending],
             "addon_pending": [asdict(a) for a in self.addon_pending],
+            "deferred_2nd": [asdict(d) for d in self.deferred_2nd],
             "sessions_rt": [asdict(s) for s in self.sessions_rt],
             "oco_counter": self._oco_counter,
             "plan_counter": self._plan_counter,
@@ -747,6 +793,7 @@ class StrategyEngine:
         self.trades = [OpenTrade(**t) for t in data.get("trades", [])]
         self.second_pending = [SecondPending(**s) for s in data.get("second_pending", [])]
         self.addon_pending = [AddonPending(**a) for a in data.get("addon_pending", [])]
+        self.deferred_2nd = [Deferred2nd(**d) for d in data.get("deferred_2nd", [])]
         for sd in data.get("sessions_rt", []):
             for srt in self.sessions_rt:
                 if srt.name == sd["name"]:
