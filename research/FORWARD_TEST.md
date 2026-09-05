@@ -45,3 +45,11 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. No TIGHT signal in 6+ days now — within normal
   range for a ~3/month strategy, but the next check will flag if this
   extends much further.
+
+## Check #5 — 2026-09-05 08:3x UTC
+
+- Data: last 299 confirmed 30m bars (2026-08-30 → 2026-09-05), OKX API.
+- Price ~80,436 (up slightly from check #4's 79,485).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell now ~7 days — still inside normal
+  variance (expected gap between ~3 signals/month is ~10 days on average).
