@@ -460,6 +460,39 @@ class TestOrder3Deferred:
         assert len(eng2.deferred_2nd) == 0
         assert len(eng2.second_pending) == 1  # Order-3 armed!
 
+    def test_order3_arms_immediately_when_addon_disabled(self):
+        """When use_addon_50=False, Order-3 arms right after Order-1 SL."""
+        cfg = _cfg(entry_mode="Breakout", one_r_basis="Distance",
+                   one_r_dist_fix=5.0, rr_ratio=4.0,
+                   use_2nd_order=True, use_addon_50=False,
+                   sl_edge_mode=True)
+        eng = StrategyEngine(cfg)
+
+        for h in range(20, 24):
+            for m in (0, 30):
+                eng.on_bar(_candle(_ts(hour=h, minute=m), 100, 100, 100, 100))
+        eng.on_bar(_candle(_ts(day=7, hour=0, minute=0), 100, 110, 90, 100))
+        for h in range(1, 5):
+            for m in (0, 30):
+                eng.on_bar(_candle(_ts(day=7, hour=h, minute=m),
+                                   100, 100, 100, 100))
+        eng.on_bar(_candle(_ts(day=7, hour=5, minute=0), 100, 100, 100, 100))
+
+        # Buy breakout → Order-1
+        eng.on_bar(_candle(_ts(day=7, hour=5, minute=30), 100, 115, 100, 112))
+        assert len(eng.trades) == 1
+        assert len(eng.addon_pending) == 0  # addon disabled
+
+        main_t = eng.trades[0]
+        main_t.sl = 95.0
+
+        # Order-1 SL hit → Order-3 armed immediately (no deferred)
+        eng.on_bar(_candle(_ts(day=7, hour=6, minute=0),
+                           100, 100, 94, 96))
+        assert len(eng.trades) == 0
+        assert len(eng.deferred_2nd) == 0   # no deferral
+        assert len(eng.second_pending) == 1  # armed immediately
+
     def test_order3_cancelled_if_addon_tp(self):
         """If Order-2 wins TP, deferred Order-3 is cancelled."""
         cfg = _cfg(entry_mode="Breakout", one_r_basis="Distance",
