@@ -116,7 +116,7 @@ def render(trades: List[ClosedTrade], tz_offset: int = 0,
     cs = o["current_streak"]
     cur = f"W{cs}" if cs > 0 else (f"L{-cs}" if cs < 0 else "-")
     lines.append(f"  Streak   : {cur}")
-    lines.append(f"  Main: {o['main']}  2nd: {o['second']}  Addon: {o['addon']}  SesClose: {o['session_close']}")
+    lines.append(f"  Order-1: {o['main']}  Order-2: {o['addon']}  Order-3: {o['second']}  SesClose: {o['session_close']}")
     lines.append("-" * 50)
     lines.append("  BY DAY        W-L        WR      NET R")
     for r in by_day(trades, tz_offset):

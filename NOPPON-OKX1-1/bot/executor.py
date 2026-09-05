@@ -164,7 +164,8 @@ class Executor:
         if self.cfg.exchange.hedge_mode:
             order["posSide"] = "long" if ev["is_buy"] else "short"
 
-        label = ev["type"].replace("FILL_", "").replace("FILL", "MAIN")
+        _labels = {"FILL": "Order-1", "FILL_2ND": "Order-3", "FILL_ADDON": "Order-2"}
+        label = _labels.get(ev["type"], ev["type"])
         try:
             res = self.client.place_order(order)
             ord_id = res.get("ordId", "")

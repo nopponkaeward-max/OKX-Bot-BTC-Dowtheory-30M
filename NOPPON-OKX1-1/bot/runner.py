@@ -122,7 +122,7 @@ class Runner:
         seen = getattr(self, "_dry_seen", 0)
         for t in self.engine.closed[seen:]:
             side = "BUY" if t.is_buy else "SELL"
-            tag = "2ND" if t.is_2nd else ("ADDON" if t.is_addon else "MAIN")
+            tag = "Order-3" if t.is_2nd and not t.is_addon else ("Order-2" if t.is_addon else "Order-1")
             res = "WIN" if t.is_win else "LOSS"
             log.info("[DRY] %s %s %s R=%+.2f entry=%.1f sl=%.1f tp=%.1f",
                      tag, side, res, t.r, t.entry, t.sl, t.tp)
