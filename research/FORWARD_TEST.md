@@ -36,3 +36,12 @@ the historical cache rather than only the last 299 bars.
 - Price ~79,772 (roughly flat vs check #2's 79,347).
 - Open trades to resolve: none. New signals: **none**.
 - Running tally: 0W / 0L.
+
+## Check #4 — 2026-09-05 02:3x UTC
+
+- Data: last 299 confirmed 30m bars (2026-08-29 → 2026-09-05), OKX API.
+- Price ~79,485 (flat vs check #3's 79,772).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. No TIGHT signal in 6+ days now — within normal
+  range for a ~3/month strategy, but the next check will flag if this
+  extends much further.
