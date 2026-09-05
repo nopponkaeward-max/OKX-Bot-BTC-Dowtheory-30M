@@ -71,7 +71,9 @@ config.yaml     # editable defaults
 
 ## Setup
 
+All commands below assume you're inside this folder:
 ```bash
+cd FeeInvest_BTCM30_OKX
 pip install -r requirements.txt
 cp .env.example .env        # add OKX keys; keep OKX_DEMO=1 to start
 ```
