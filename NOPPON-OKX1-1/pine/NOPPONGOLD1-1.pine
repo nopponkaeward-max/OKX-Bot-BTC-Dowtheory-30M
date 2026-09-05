@@ -1,0 +1,2050 @@
+//@version=6
+
+indicator("NOPPON-GOLD1-1", shorttitle="NPN-GOLD1-1", overlay=true, max_boxes_count=500, max_lines_count=500, max_labels_count=500)
+
+// ==========================================
+
+// --- 1. INPUT SETTINGS ---
+
+// ==========================================
+
+// --- Entry Strategy ---
+
+entryModeTip = "คำอธิบายแต่ละโหมด:\\n\\n1. Breakout — ราคาเบรคขอบกรอบ → เข้าที่ขอบทันที (เร็ว แต่โดนเบรคหลอกง่าย)\\n\\n2. Pullback — เบรค → รอย่อลึกตาม % → เข้าที่ราคาย่อ (R:R ดีขึ้น อาจพลาด trade)\\n\\n3. Pullback + Re-break — เบรค → รอย่อ → รอเบรคขอบอีกครั้ง → เข้าที่ขอบ (ยืนยัน 3 ชั้น)"
+
+entryMode        = input.string("1. Breakout", title="Entry Mode", options=["1. Breakout", "2. Pullback", "3. Pullback + Re-break"], group="Entry Strategy", tooltip=entryModeTip)
+
+pullbackRangePct = input.float(20, title=" Pullback % of Range (โหมด 2, 3)", minval=1, maxval=100, step=5, group="Entry Strategy")
+
+usePullback      = entryMode == "2. Pullback" or entryMode == "3. Pullback + Re-break"
+
+usePbRebreak     = entryMode == "3. Pullback + Re-break"
+
+usePbLevel       = usePullback
+
+planExpireHours  = input.float(0, title="Plan Expiry (hrs, 0=cancel at session start)", minval=0, step=0.5, group="Entry Strategy")
+
+closeMainOnNewSes = input.bool(true, title="Close Main Order on New Session (ปิด Main order เมื่อเซสชั่นใหม่เริ่ม)", group="Entry Strategy")
+
+use2ndOrder       = input.bool(true, title="Enable 2nd Order on Re-break (เปิด order ใหม่เมื่อเบรคกรอบเดิมอีก)", group="Entry Strategy")
+
+use2ndCustomRR    = input.bool(false, title=" └ 2nd Order: Custom TP R:R (ตั้ง R:R ของไม้ 2 อิสระ)", group="Entry Strategy", tooltip="ปิด = ไม้ 2 ใช้ R:R เดียวกับ Base R:R\\nเปิด = ไม้ 2 ใช้ค่า R:R ด้านล่างแทน")
+
+secondRR          = input.float(5, title=" └ 2nd Order R:R", minval=0.1, step=0.1, group="Entry Strategy", tooltip="R:R ของไม้ 2 เมื่อเปิด Custom TP R:R")
+
+useAddOn50        = input.bool(true, title="Enable 50% Add-on Order (main ยังเปิด + ราคาย่อกลับ 50% กรอบ → เปิดไม้เสริม)", group="Entry Strategy", tooltip="เมื่อ main order ยังเปิดอยู่ แล้วราคาย่อกลับมาที่ 50% ของกรอบ session → เปิดไม้เสริม (Add-on)")
+
+aoTpMode          = input.string("R:R Ratio", title=" └ Add-on TP Mode", options=["ราคาทุน Main", "R:R Ratio"], group="Entry Strategy", tooltip="ราคาทุน Main = TP ที่ขอบกรอบ (entry ของ main)\\nR:R Ratio = TP ตาม R:R อิสระ คำนวณจาก 1R ของ add-on")
+
+aoRR              = input.float(5, title=" └ Add-on R:R", minval=0.1, step=0.1, group="Entry Strategy", tooltip="R:R สำหรับ Add-on เมื่อเลือก TP Mode = R:R Ratio\\n1R = ระยะ entry ถึง SL")
+
+aoMainBE          = input.bool(false, title=" └ Move Main TP to Break-even (ย้าย TP main มาเท่าทุนเมื่อเปิดไม้เสริม)", group="Entry Strategy", tooltip="เมื่อ Add-on 50% เปิด → ย้าย TP ของ main มาที่ราคา entry (ขอบกรอบ)")
+
+aoKeepOpen        = input.bool(false, title=" └ Add-on: Don't Close with Main on New Session", group="Entry Strategy", tooltip="ปิด = add-on ถูกปิดพร้อม main เมื่อเซสชั่นใหม่เริ่ม\\nเปิด = add-on ยังเปิดต่อ รอ TP/SL ของตัวเอง")
+
+tradeSun          = input.bool(false, title="Trade Sunday",    group="Entry Strategy")
+tradeMon          = input.bool(true,  title="Trade Monday",    group="Entry Strategy")
+tradeTue          = input.bool(true,  title="Trade Tuesday",   group="Entry Strategy")
+tradeWed          = input.bool(true,  title="Trade Wednesday", group="Entry Strategy")
+tradeThu          = input.bool(true,  title="Trade Thursday",  group="Entry Strategy")
+tradeFri          = input.bool(true,  title="Trade Friday",    group="Entry Strategy")
+tradeSat          = input.bool(false, title="Trade Saturday",  group="Entry Strategy")
+
+// --- Session ---
+
+sesRefTip = "REFERENCE — เวลาเริ่มตลาด (UTC) ตามฤดู\\n(ใช้เป็น anchor ตั้งค่าช่อง Session เอง)\\n\\n━ Forex Session Open (07:00 ท้องถิ่น) ━\\n • Sydney:   Oct-Mar 2000  /  Apr-Sep 2100\\n • Tokyo:    ทั้งปี 0000\\n • London:   Oct-Mar 0800  /  Apr-Sep 0700\\n • New York: Oct-Mar 1300  /  Apr-Sep 1200\\n\\n━ Gold / CME Reset (18:00 NY = แท่งแรกหลัง daily break) ━\\n • Oct-Mar (EST): 2300\\n • Apr-Sep (EDT): 2200\\n\\n━ Daily Market Break (ตลาดปิด) ━\\n • Gold: Oct-Mar 2200-2300  /  Apr-Sep 2100-2200\\n\\nหมายเหตุ:\\n • US DST จริง = กลาง มี.ค. → ต้น พ.ย.\\n   โค้ดใช้ Apr-Sep เป็นเกณฑ์ → คลาดเคลื่อน ~2 สัปดาห์ที่ขอบ\\n • Sydney ซีกโลกใต้ → DST สลับกับซีกเหนือ\\n   (ช่วง Oct-Mar ซิดนีย์อยู่ในหน้าร้อน/DST)"
+
+useSyd    = input.bool(true, title="Enable Sydney", group="Session", tooltip=sesRefTip)
+
+sydSes    = input.session("2000-0500", title=" Sydney Time (Oct-Mar)", group="Session", tooltip=sesRefTip)
+
+sydSesDst = input.session("2100-0600", title=" Sydney Time (Apr-Sep)", group="Session", tooltip=sesRefTip)
+
+sydCol    = input.color(color.blue, title=" Sydney Box Color", group="Session")
+
+useTok    = input.bool(false, title="Enable Tokyo", group="Session")
+
+tokSes    = input.session("0000-0900", title=" Tokyo Time (Oct-Mar)", group="Session", tooltip=sesRefTip)
+
+tokSesDst = input.session("0000-0900", title=" Tokyo Time (Apr-Sep)", group="Session", tooltip=sesRefTip)
+
+tokCol    = input.color(color.fuchsia, title=" Tokyo Box Color", group="Session")
+
+useLon    = input.bool(false, title="Enable London", group="Session")
+
+lonSes    = input.session("0800-1700", title=" London Time (Oct-Mar)", group="Session", tooltip=sesRefTip)
+
+lonSesDst = input.session("0700-1600", title=" London Time (Apr-Sep)", group="Session", tooltip=sesRefTip)
+
+lonCol    = input.color(color.green, title=" London Box Color", group="Session")
+
+useNy     = input.bool(false, title="Enable New York", group="Session")
+
+nySes     = input.session("1300-2200", title=" New York Time (Oct-Mar)", group="Session", tooltip=sesRefTip)
+
+nySesDst  = input.session("1200-2100", title=" New York Time (Apr-Sep)", group="Session", tooltip=sesRefTip)
+
+nyCol     = input.color(color.orange, title=" New York Box Color", group="Session")
+
+// V9.7: Gap Fallback — เมื่อ session ตกอยู่ในช่วงที่ตลาดปิด (daily break/สุดสัปดาห์)
+
+gapFallback = input.bool(false, title="Gap Fallback (session ตกช่วงตลาดปิด → ใช้แท่งแรกหลังตลาดเปิด)", group="Session", tooltip="บางสินทรัพย์มีช่วงพักตลาดรายวัน\\nเปิด = ใช้แท่งแรกหลังตลาดกลับมาเปิดเป็นกรอบ session แทน\\nปิด = ข้าม session นั้นและแสดง warning บนกราฟ")
+
+tz_incr      = input.int(0, title="UTC (+/-)", group="Timezone")
+
+use_exchange = input.bool(false, title=" Timezone Exchange", group="Timezone")
+
+// --- Risk Management ---
+
+// 1R Basis: เลือกฐานคำนวณ 1R (Risk Unit) ที่ใช้ทั้ง TP, R:R, และ lot sizing
+
+oneRBasis     = input.string("SL%", title="1R Basis", options=["SL%", "Distance", "ATR"], group="Risk Management", tooltip="เลือกฐานคำนวณ 1R ที่ใช้ทั้ง TP, R:R, และ lot sizing\\n\\nSL% = 1R เท่ากับ % ของ session range\\nDistance = 1R เท่ากับระยะห่างคงที่\\nATR = 1R เท่ากับ ATR × Multiplier")
+
+oneRPctVal    = input.float(55, title=" [SL%] 1R = % of Session", minval=1, maxval=100, step=5, group="Risk Management", tooltip="ใช้เมื่อ 1R Basis = SL%\\n1R = % ที่กรอก × session range")
+
+oneRDistFix   = input.float(5, title=" [Distance] 1R = Fixed Distance", minval=0.001, step=1, group="Risk Management", tooltip="ใช้เมื่อ 1R Basis = Distance\\n1R = ระยะห่างคงที่ (หน่วยราคาของสินทรัพย์)")
+
+oneRAtrPeriod = input.int(14, title=" [ATR] Period", minval=5, maxval=50, group="Risk Management", tooltip="ใช้เมื่อ 1R Basis = ATR")
+
+oneRAtrMult   = input.float(1.5, title=" [ATR] Multiplier", minval=0.5, maxval=5, step=0.1, group="Risk Management", tooltip="1R = ATR(period) × Multiplier")
+
+slEdgeMode    = input.bool(false, title="SL at Session Edge (SL วางที่ขอบกรอบ)", group="Risk Management", tooltip="เปิด = SL วางที่ขอบ session เสมอ\\n1R Basis ยังใช้เป็นไม้บรรทัดสำหรับ TP และ R accounting")
+
+riskAmount    = input.float(500.0, title=" Risk per 1R ($)", minval=0.01, group="Risk Management", tooltip="เงินที่ยอมเสียต่อ 1R\\nlot ถูก size ให้ hitting 1R = ขาดทุนเท่านี้\\nถ้าเปิด Edge SL → ขาดทุนจริงเมื่อโดน SL = R × Risk (อาจมากกว่า)")
+
+rrRatio       = input.float(5.0, title=" Risk : Reward (R:R)", minval=0.1, step=0.1, group="Risk Management")
+
+rrBaseMode    = input.string("SL Distance", title=" R:R Measured Against", options=["1R Basis", "SL Distance"], group="Risk Management", tooltip="ฐานที่ใช้คูณกับ R:R เพื่อหาระยะ TP\\n\\n1R Basis = TP = entry ± (1R × R:R)\\nSL Distance = TP = entry ± (ระยะ SL จริง × R:R)")
+
+pipValueRatio = input.float(100.0, title=" 1 Lot Ratio", group="Risk Management")
+
+spreadPts     = input.float(0, title=" Spread (price)", minval=0, step=0.0001, group="Risk Management", tooltip="Spread ของโบรคเกอร์ (หน่วยราคา)\\nBUY: entry = ขอบกรอบ + spread\\nSELL: entry = ขอบกรอบ - spread")
+
+// 1R distance base values (session-range mode still needs sesRange to compute at runtime)
+
+float atrVal   = ta.atr(oneRAtrPeriod)
+
+float oneRAtr  = atrVal * oneRAtrMult
+
+float oneRPct     = oneRPctVal / 100
+
+// --- Trailing SL (Normal) ---
+
+useTrail      = input.bool(false, title="Enable Trailing SL (Normal)", group="Trailing SL (Normal)")
+
+trailTriggerR = input.float(2.0, title="Trail Trigger at (R)", minval=0.1, step=0.1, group="Trailing SL (Normal)")
+
+trailLockR    = input.float(1.0, title="Lock SL at (R)", minval=0.0, step=0.1, group="Trailing SL (Normal)")
+
+// --- Display & Stats ---
+
+showSesRange   = input.bool(false, title=" Show Session Boxes", group="Display & Stats")
+
+showStatsTable = input.bool(true, title=" Show Stats Table", group="Display & Stats")
+
+showTradePath  = input.bool(true, title=" Show Trade Path Lines (เส้นโยงจากเปิด→TP/SL)", group="Display & Stats")
+
+showTpSlBox    = false  // TP/SL boxes removed — arrows used instead
+
+showDailyTable   = input.bool(false, title=" Show Daily Stats Table (Winrate รายวันของเดือน)", group="Display & Stats")
+
+showMonthlyTable = input.bool(true, title=" Show Monthly Stats Table (สรุปรายเดือน)", group="Display & Stats")
+
+showSettingsTable = input.bool(false, title=" Show Settings Summary Table (สรุปการตั้งค่า)", group="Display & Stats")
+
+limitDrawDays    = input.bool(true, title=" Limit Drawings", group="Display & Stats")
+
+statMode       = input.string("2. ย้อนหลังตามจำนวนเดือน (Months)", title="▶ เลือกโหมดดูสถิติ (Dropdown)", options=["1. ย้อนหลังตามจำนวนวัน (Days)", "2. ย้อนหลังตามจำนวนเดือน (Months)", "3. เจาะจงเดือนและปี (Specific Month)"], group="Display & Stats")
+
+statDays       = input.int(1, title="[โหมด 1] ย้อนหลัง (วัน)", minval=1, maxval=365, group="Display & Stats")
+
+statMonths     = input.int(9, title="[โหมด 2] ย้อนหลัง (เดือน) [1-12]", minval=1, maxval=12, group="Display & Stats")
+
+statTargetM    = input.string("August", title="[โหมด 3] ระบุเดือน", options=["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"], group="Display & Stats")
+
+statTargetY    = input.int(0, title="[โหมด 3] ระบุปี (ใส่ 0 = ดึงปีปัจจุบันอัตโนมัติ)", minval=0, maxval=2100, group="Display & Stats")
+
+// --- Table Position ---
+
+// เรียงซ้าย→ขวา ตามความสูง (สูง→เตี้ย): dailyStats(34) | monthlyStats(~15) | stats(11) | dayStats(8)
+
+// หมายเหตุ: PineScript มี bottom slot เพียง 3 (Left/Center/Right), ตัวเตี้ยสุดวางที่ Middle Right
+
+settingsTablePosStr = input.string("Bottom Left",  title="▶ ตำแหน่งตาราง Settings Summary",    options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Display & Stats")
+
+dailyTablePosStr   = input.string("Middle Left",   title="▶ ตำแหน่งตาราง Daily (By Date)",    options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Display & Stats")
+
+monthlyTablePosStr = input.string("Bottom Center", title="▶ ตำแหน่งตาราง Monthly (By Month)", options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Display & Stats")
+
+mainTablePosStr    = input.string("Bottom Right",  title="▶ ตำแหน่งตารางหลัก (Stats)",       options=["Top Left","Top Center","Top Right","Middle Left","Middle Right","Bottom Left","Bottom Center","Bottom Right"], group="Display & Stats")
+
+orderLabelSizeStr  = input.string("Small", title="Order Label Size (ขนาดป้าย Buy/Sell/Add-on)", options=["Tiny","Small","Normal","Large","Huge"], group="Display & Stats")
+
+orderLabelSize = orderLabelSizeStr == "Tiny" ? size.tiny : orderLabelSizeStr == "Normal" ? size.normal : orderLabelSizeStr == "Large" ? size.large : orderLabelSizeStr == "Huge" ? size.huge : size.small
+
+// small price/level labels scale one step below the main order labels
+orderLabelSizeSm = orderLabelSizeStr == "Tiny" ? size.tiny : orderLabelSizeStr == "Small" ? size.small : orderLabelSizeStr == "Normal" ? size.small : orderLabelSizeStr == "Large" ? size.normal : size.large
+
+// ==========================================
+
+// --- 2. TIMEZONE & UTILS ---
+
+// ==========================================
+
+tf = timeframe.period
+
+var tz = use_exchange ? syminfo.timezone : str.format("UTC{0}{1}", tz_incr >= 0 ? "+" : "-", math.abs(tz_incr))
+
+// --- Helper: แปลง string → table position ---
+
+f_tablePos(string s) =>
+    switch s
+        "Top Left"      => position.top_left
+        "Top Center"    => position.top_center
+        "Top Right"     => position.top_right
+        "Middle Left"   => position.middle_left
+        "Middle Right"  => position.middle_right
+        "Bottom Left"   => position.bottom_left
+        "Bottom Center" => position.bottom_center
+        =>                 position.bottom_right
+int currentYear = year(timenow, tz)
+
+int actualTargetY = statTargetY == 0 ? currentYear : statTargetY
+
+var array<bool>  resIsWin   = array.new_bool()
+
+var array<float> resTradeRR = array.new_float()
+
+var array<int>   resTime    = array.new_int()
+
+var array<bool>  resIsSmall = array.new_bool()
+
+var array<bool>  resIsRec   = array.new_bool()
+
+var array<bool>  resIs2nd   = array.new_bool()
+
+var array<float> resTpPts   = array.new_float()
+
+var array<int>   dayList    = array.new_int()
+
+int curDayId = (year(time, tz) * 10000) + (month(time, tz) * 100) + dayofmonth(time, tz)
+
+bool needPushDay = array.size(dayList) == 0
+
+if not needPushDay
+    needPushDay := array.get(dayList, array.size(dayList) - 1) != curDayId
+if needPushDay
+    array.push(dayList, curDayId)
+    if array.size(dayList) > 400
+        array.shift(dayList)
+var array<box>   regBoxes    = array.new<box>()
+
+var array<int>   regBoxTime  = array.new_int()
+
+var array<line>  regLines    = array.new<line>()
+
+var array<int>   regLineTime = array.new_int()
+
+var array<label> regLabels   = array.new<label>()
+
+var array<int>   regLabelTime= array.new_int()
+
+regBox(box _b) =>
+    if not na(_b)
+        array.push(regBoxes, _b)
+        array.push(regBoxTime, time)
+        if array.size(regBoxes) > 600
+            box.delete(array.shift(regBoxes))
+            array.shift(regBoxTime)
+regLine(line _l) =>
+    if not na(_l)
+        array.push(regLines, _l)
+        array.push(regLineTime, time)
+        if array.size(regLines) > 600
+            line.delete(array.shift(regLines))
+            array.shift(regLineTime)
+regLabel(label _lb) =>
+    if not na(_lb)
+        array.push(regLabels, _lb)
+        array.push(regLabelTime, time)
+        if array.size(regLabels) > 600
+            label.delete(array.shift(regLabels))
+            array.shift(regLabelTime)
+// ==========================================
+
+// --- 3. SESSION & TRADE DATA STRUCTURES ---
+
+// ==========================================
+
+type SessionData
+    string name
+    string timeStr
+    string dstTimeStr
+    bool   isEnabled
+    bool   isActive
+    float  hi
+    float  lo
+    int    startBar
+    box    rangeBox
+    color  boxCol
+var array<SessionData> sessions = array.new<SessionData>()
+
+if barstate.isfirst
+    array.push(sessions, SessionData.new("Sydney", sydSes, sydSesDst, useSyd, false, na, na, na, na, sydCol))
+    array.push(sessions, SessionData.new("Tokyo", tokSes, tokSesDst, useTok, false, na, na, na, na, tokCol))
+    array.push(sessions, SessionData.new("London", lonSes, lonSesDst, useLon, false, na, na, na, na, lonCol))
+    array.push(sessions, SessionData.new("New York", nySes, nySesDst, useNy, false, na, na, na, na, nyCol))
+// --- Plan arrays ---
+
+var array<int>    pOcoId    = array.new_int()
+
+var array<string> pSesName  = array.new_string()
+
+var array<bool>   pIsBuy    = array.new_bool()
+
+var array<float>  pEntry    = array.new_float()
+
+var array<float>  pSL       = array.new_float()
+
+var array<float>  pTP       = array.new_float()
+
+var array<float>  pLot      = array.new_float()
+
+var array<float>  pTradeRR  = array.new_float()
+
+var array<bool>   pIsSmall  = array.new_bool() 
+
+var array<float>  pSesRange = array.new_float()
+
+var array<box>    pTpBox    = array.new_box()
+
+var array<box>    pSlBox    = array.new_box()
+
+var array<line>   pLine     = array.new_line()
+
+var array<line>   pTpLn     = array.new_line()
+
+var array<line>   pSlLn     = array.new_line()
+
+var array<label>  pTpLbl    = array.new_label()
+
+var array<label>  pSlLbl    = array.new_label()
+
+var array<label>  pLabel    = array.new_label()
+
+var array<int>    pState      = array.new_int()
+
+var array<int>    pCreateTime = array.new_int()
+
+var int ocoCounter = 0
+
+// --- Trade arrays ---
+
+var array<bool>   tIsBuy    = array.new_bool()
+
+var array<float>  tEntry    = array.new_float()
+
+var array<float>  tSL       = array.new_float()
+
+var array<float>  tTP       = array.new_float()
+
+var array<int>    tBarIdx   = array.new_int()
+
+var array<float>  tPipsDist = array.new_float()
+
+var array<float>  tTradeRR  = array.new_float() 
+
+var array<bool>   tIsSmall  = array.new_bool() 
+
+var array<bool>   tIsRec    = array.new_bool()
+
+var array<bool>   tTrailed  = array.new_bool()
+
+var array<float>  tSlR      = array.new_float()
+
+var array<box>    tSlBox    = array.new_box()
+
+var array<line>   tTrailLn  = array.new_line()
+
+// per-trade TP/SL fill visuals — TP/SL price tags + horizontal level lines
+// Every trade (Main, 2nd, Add-on) captures its handles; all four are deleted at trade close
+// so the level markers vanish with the order instead of lingering as chart clutter.
+
+var array<label>  tAoTpLbl  = array.new_label()
+
+var array<label>  tAoSlLbl  = array.new_label()
+
+var array<line>   tAoTpLn   = array.new_line()
+
+var array<line>   tAoSlLn   = array.new_line()
+
+// Per-Main flag: was this Main's linked Add-on already closed with a TP win?
+// If true, don't arm the 2nd-order rescue when this Main hits SL — the pair already recovered.
+
+var array<bool>   tAddonTPd = array.new_bool()
+
+var array<float>  tSesRange    = array.new_float()
+
+var array<string> tSesName     = array.new_string()
+
+var array<int>    tOriginTime  = array.new_int()
+
+var array<float>  tOrigEntry   = array.new_float()
+
+var array<bool>   tIs2nd       = array.new_bool()
+
+var array<bool>   tIsAddon     = array.new_bool()
+
+// --- 2nd Order Pending arrays ---
+
+var array<bool>   p2IsBuy      = array.new_bool()
+
+var array<float>  p2Entry      = array.new_float()
+
+var array<float>  p2SesRange   = array.new_float()
+
+var array<string> p2SesName    = array.new_string()
+
+var array<int>    p2OriginTime = array.new_int()
+
+var array<bool>   p2IsSmall    = array.new_bool()
+
+var array<float>  p2OrigEntry  = array.new_float()
+
+var array<line>   p2PendLn     = array.new_line()      // pending re-break level line (shown from the main SL)
+
+var array<label>  p2PendLb     = array.new_label()     // pending "Ready to Trade" label (shown from the main SL)
+
+var array<line>   p2PendTpLn   = array.new_line()      // pending TP level line for the 2nd order preview
+
+var array<line>   p2PendSlLn   = array.new_line()      // pending SL level line for the 2nd order preview
+
+var array<label>  p2PendTpLb   = array.new_label()     // pending TP price tag for the 2nd order preview
+
+var array<label>  p2PendSlLb   = array.new_label()     // pending SL price tag for the 2nd order preview
+
+// --- 50% Add-on Order Pending arrays ---
+
+var array<bool>   aoIsBuy      = array.new_bool()
+
+var array<float>  aoLevel      = array.new_float()   // 50% trigger price
+
+var array<float>  aoTP         = array.new_float()   // main entry (cost) = TP target
+
+var array<float>  aoSL         = array.new_float()   // main SL snapshot
+
+var array<float>  aoSesRange   = array.new_float()
+
+var array<string> aoSesName    = array.new_string()
+
+var array<int>    aoOriginTime = array.new_int()     // main's origin time (link key)
+
+var array<bool>   aoIsSmall    = array.new_bool()
+
+var array<line>   aoLn         = array.new_line()      // moving purple dashed line at the 50% entry level
+
+var array<line>   aoTpLn       = array.new_line()      // add-on TP purple dashed line
+
+var array<line>   aoSlLn       = array.new_line()      // add-on SL purple dashed line
+
+var array<label>  aoLb         = array.new_label()     // add-on preview main label ("ออเดอร์ที่ 2 รอ ...")
+
+var array<label>  aoTpLb       = array.new_label()     // add-on preview TP price tag
+
+var array<label>  aoSlLb       = array.new_label()     // add-on preview SL price tag
+
+// ==========================================
+
+// --- 4. SESSION TRACKING & PLAN CREATION ---
+
+// ==========================================
+
+// Unified 1R distance helper — pass session range for SL% mode
+
+oneRDistOf(float sesRng) => oneRBasis == "Distance" ? oneRDistFix : oneRBasis == "ATR" ? oneRAtr : sesRng * oneRPct
+
+// V9.6: Manual session-overlap detector.
+
+// Pine's built-in time(tf, session) checks only if the bar OPEN falls inside
+
+// the session — which silently misses sub-hour sessions on higher chart TFs
+
+// (e.g. session "2100-2115" on a 4H chart, since no bar opens at 21:00).
+
+// This helper checks bar-vs-session OVERLAP so any bar whose time window
+
+// touches the session counts as in-session, on any chart TF.
+
+inSessionOverlap(string sesStr) =>
+    int sStart = 0
+    int sEnd   = 0
+    bool ok = false
+    if str.length(sesStr) >= 9
+        int sH1 = int(str.tonumber(str.substring(sesStr, 0, 2)))
+        int sM1 = int(str.tonumber(str.substring(sesStr, 2, 4)))
+        int sH2 = int(str.tonumber(str.substring(sesStr, 5, 7)))
+        int sM2 = int(str.tonumber(str.substring(sesStr, 7, 9)))
+        sStart := sH1 * 60 + sM1
+        sEnd   := sH2 * 60 + sM2
+        int barMin = hour(time, tz) * 60 + minute(time, tz)
+        int barLen = math.max(1, math.round(timeframe.in_seconds() / 60))
+        int barEnd = barMin + barLen
+        if sStart < sEnd
+            // Same-day session
+            ok := barMin < sEnd and barEnd > sStart
+        else if sStart > sEnd
+            // Crosses midnight → [sStart, 1440) ∪ [0, sEnd)
+            ok := barMin >= sStart or barMin < sEnd or barEnd > sStart or (barEnd > 1440 and (barEnd - 1440) > 0)
+    ok
+// V9.7: timestamp (ms) ของเวลาเริ่ม session บนวันที่ของแท่งปัจจุบัน
+
+sesStartTsOf(string sesStr) =>
+    int h = int(str.tonumber(str.substring(sesStr, 0, 2)))
+    int m = int(str.tonumber(str.substring(sesStr, 2, 4)))
+    timestamp(tz, year(time, tz), month(time, tz), dayofmonth(time, tz), h, m, 0)
+int curMonth = month(time, tz)
+
+bool isDST = curMonth >= 4 and curMonth <= 9
+
+// --- Alert event flags (bar-level; reset each bar, set true when the event fires) ---
+bool sigNewOrder = false
+bool sigFilled   = false
+bool sig2ndOpen  = false
+bool sigAddOn    = false
+
+for i = 0 to array.size(sessions) - 1
+    SessionData s = array.get(sessions, i)
+    bool trackThis = s.isEnabled
+    string cancelMatchName = s.name
+    if trackThis
+        string activeSes = isDST ? s.dstTimeStr : s.timeStr
+        bool is_ses = inSessionOverlap(activeSes)
+        // V9.7: Gap-swallowed session — ทั้ง session window ตกอยู่ในช่องว่างของข้อมูล
+        // (ตลาดพักรายวัน เช่น XAUUSD 21:00-22:00 UTC หน้าร้อนสหรัฐ) → ไม่มีแท่งไหน
+        // overlap กับ session เลยบน TF นี้ ตรวจจับด้วย: แท่งนี้เปิดหลัง session start,
+        // แท่งก่อนหน้าจบก่อน session start (มี gap คร่อม), และช้าไม่เกิน 4 ชม.
+        bool gapMissed = false
+        if not is_ses and not s.isActive
+            int gTs = sesStartTsOf(activeSes)
+            int barLenMs = timeframe.in_seconds() * 1000
+            bool swallowed = time > gTs and nz(time[1]) + barLenMs <= gTs and (time - gTs) <= 4 * 3600 * 1000
+            if swallowed
+                if gapFallback
+                    gapMissed := true
+                    regLabel(label.new(x=bar_index, y=high, text="⏩ Gap Fallback", style=label.style_label_down, color=color.new(color.orange, 40), textcolor=color.white, size=size.small))
+                else
+                    regLabel(label.new(x=bar_index, y=high, text="⚠ Missed\\nตลาดปิดช่วง session", style=label.style_label_down, color=color.new(color.red, 30), textcolor=color.white, size=size.small))
+        bool sesStart = (is_ses or gapMissed) and not s.isActive
+        bool sesEnd   = not is_ses and s.isActive
+        s.isActive := is_ses or gapMissed
+        if sesStart
+            if planExpireHours == 0 and array.size(pSesName) > 0
+                int pIdx = array.size(pSesName) - 1
+                while pIdx >= 0
+                    if pIdx < array.size(pSesName) and array.get(pSesName, pIdx) == cancelMatchName
+                        bool  isBCancel = array.get(pIsBuy, pIdx)
+                        float cancelY   = array.get(pEntry, pIdx)
+                        regLabel(label.new(x=bar_index, y=cancelY, text="Cancel", color=color.new(color.gray, 20), textcolor=color.white, style=isBCancel ? label.style_label_down : label.style_label_up, size=orderLabelSize))
+                        box.delete(array.get(pTpBox, pIdx))
+                        box.delete(array.get(pSlBox, pIdx))
+                        line.delete(array.get(pLine, pIdx))
+                        line.delete(array.get(pTpLn, pIdx))
+                        line.delete(array.get(pSlLn, pIdx))
+                        label.delete(array.get(pTpLbl, pIdx))
+                        label.delete(array.get(pSlLbl, pIdx))
+                        label.delete(array.get(pLabel, pIdx))
+                        array.remove(pOcoId, pIdx), array.remove(pSesName, pIdx), array.remove(pIsBuy, pIdx)
+                        array.remove(pEntry, pIdx), array.remove(pSL, pIdx), array.remove(pTP, pIdx), array.remove(pLot, pIdx)
+                        array.remove(pTradeRR, pIdx), array.remove(pIsSmall, pIdx), array.remove(pSesRange, pIdx)
+                        array.remove(pTpBox, pIdx), array.remove(pSlBox, pIdx), array.remove(pLine, pIdx), array.remove(pTpLn, pIdx), array.remove(pSlLn, pIdx), array.remove(pTpLbl, pIdx), array.remove(pSlLbl, pIdx), array.remove(pLabel, pIdx)
+                        array.remove(pState, pIdx), array.remove(pCreateTime, pIdx)
+                    pIdx -= 1
+            // Cancel 2nd order pending on new session start
+            if use2ndOrder and array.size(p2SesName) > 0
+                int p2x = array.size(p2SesName) - 1
+                while p2x >= 0
+                    if p2x < array.size(p2SesName) and array.get(p2SesName, p2x) == cancelMatchName
+                        line.delete(array.get(p2PendLn, p2x))
+                        line.delete(array.get(p2PendTpLn, p2x))
+                        line.delete(array.get(p2PendSlLn, p2x))
+                        label.delete(array.get(p2PendLb, p2x))
+                        label.delete(array.get(p2PendTpLb, p2x))
+                        label.delete(array.get(p2PendSlLb, p2x))
+                        array.remove(p2IsBuy, p2x), array.remove(p2Entry, p2x), array.remove(p2SesRange, p2x)
+                        array.remove(p2SesName, p2x), array.remove(p2OriginTime, p2x), array.remove(p2IsSmall, p2x), array.remove(p2OrigEntry, p2x), array.remove(p2PendLn, p2x), array.remove(p2PendLb, p2x)
+                        array.remove(p2PendTpLn, p2x), array.remove(p2PendSlLn, p2x), array.remove(p2PendTpLb, p2x), array.remove(p2PendSlLb, p2x)
+                    p2x -= 1
+            // Cancel 50% add-on pending on new session start
+            if useAddOn50 and array.size(aoSesName) > 0
+                int aox = array.size(aoSesName) - 1
+                while aox >= 0
+                    if aox < array.size(aoSesName) and array.get(aoSesName, aox) == cancelMatchName
+                        line.delete(array.get(aoLn, aox))
+                        line.delete(array.get(aoTpLn, aox))
+                        line.delete(array.get(aoSlLn, aox))
+                        label.delete(array.get(aoLb, aox))
+                        label.delete(array.get(aoTpLb, aox))
+                        label.delete(array.get(aoSlLb, aox))
+                        array.remove(aoIsBuy, aox), array.remove(aoLevel, aox), array.remove(aoTP, aox)
+                        array.remove(aoSL, aox), array.remove(aoSesRange, aox), array.remove(aoSesName, aox)
+                        array.remove(aoOriginTime, aox), array.remove(aoIsSmall, aox), array.remove(aoLn, aox), array.remove(aoTpLn, aox), array.remove(aoSlLn, aox)
+                        array.remove(aoLb, aox), array.remove(aoTpLb, aox), array.remove(aoSlLb, aox)
+                    aox -= 1
+            // Close open MAIN orders on new session start
+            if closeMainOnNewSes and array.size(tEntry) > 0
+                int ti = array.size(tEntry) - 1
+                while ti >= 0
+                    if ti < array.size(tEntry) and not array.get(tIsRec, ti) and not (aoKeepOpen and array.get(tIsAddon, ti))
+                        bool  isBT    = array.get(tIsBuy, ti)
+                        float entT    = array.get(tEntry, ti)
+                        float distT   = array.get(tPipsDist, ti)
+                        float closePx = close
+                        float pnlDist = isBT ? closePx - entT : entT - closePx
+                        float actualR = distT > 0 ? pnlDist / distT : 0
+                        bool  statAsWin = actualR > 0
+                        color closeCol = statAsWin ? color.green : actualR == 0 ? color.gray : color.red
+                        array.push(resIsWin, statAsWin)
+                        array.push(resTradeRR, actualR)
+                        array.push(resTime, array.get(tOriginTime, ti))
+                        array.push(resIsSmall, array.get(tIsSmall, ti))
+                        array.push(resIsRec, false)
+                        array.push(resIs2nd, array.get(tIs2nd, ti))
+                        array.push(resTpPts, math.abs(pnlDist))
+                        if array.size(resIsWin) > 5000
+                            array.shift(resIsWin), array.shift(resTradeRR), array.shift(resTime)
+                            array.shift(resIsSmall), array.shift(resIsRec), array.shift(resIs2nd), array.shift(resTpPts)
+                        string sesCloseTag = array.get(tIsAddon, ti) ? "ออเดอร์ที่ 2" : "ออเดอร์ที่ 1"
+                        regLabel(label.new(x=bar_index, y=closePx, text="", style=label.style_circle, color=color.new(closeCol, 50), size=size.normal))
+                        string rSignC = actualR >= 0 ? "+" : ""
+                        regLabel(label.new(x=bar_index, y=closePx, text="Close " + sesCloseTag + "\\n" + rSignC + str.tostring(actualR, "#.##") + "R", color=color.new(color.gray, 20), textcolor=color.white, style=isBT ? label.style_label_up : label.style_label_down, size=size.small))
+                        regLine(line.new(x1=bar_index - 3, y1=closePx, x2=bar_index + 3, y2=closePx, color=closeCol, width=2))
+                        if showTradePath
+                            regLine(line.new(x1=array.get(tBarIdx, ti), y1=entT, x2=bar_index, y2=closePx, color=color.new(closeCol, 60), width=1, style=line.style_dashed))
+                        box tSlB = array.get(tSlBox, ti)
+                        if not na(tSlB)
+                            box.set_right(tSlB, bar_index)
+                        line tTrL = array.get(tTrailLn, ti)
+                        if not na(tTrL)
+                            line.delete(tTrL)
+                        label.delete(array.get(tAoTpLbl, ti)), label.delete(array.get(tAoSlLbl, ti))
+                        line.delete(array.get(tAoTpLn, ti)),  line.delete(array.get(tAoSlLn, ti))
+                        array.remove(tIsBuy, ti), array.remove(tEntry, ti), array.remove(tSL, ti), array.remove(tTP, ti)
+                        array.remove(tBarIdx, ti), array.remove(tPipsDist, ti), array.remove(tTradeRR, ti), array.remove(tIsSmall, ti), array.remove(tIsRec, ti)
+                        array.remove(tTrailed, ti), array.remove(tSlR, ti), array.remove(tSlBox, ti), array.remove(tTrailLn, ti), array.remove(tSesRange, ti), array.remove(tSesName, ti)
+                        array.remove(tOriginTime, ti), array.remove(tOrigEntry, ti), array.remove(tIs2nd, ti), array.remove(tIsAddon, ti)
+                        array.remove(tAoTpLbl, ti), array.remove(tAoSlLbl, ti), array.remove(tAoTpLn, ti), array.remove(tAoSlLn, ti), array.remove(tAddonTPd, ti)
+                    ti -= 1
+            s.startBar := bar_index
+            s.hi := high
+            s.lo := low
+            if showSesRange
+                s.rangeBox := box.new(left=bar_index, top=high, right=bar_index, bottom=low, bgcolor=color.new(s.boxCol, 92), border_color=color.new(s.boxCol, 60), border_style=line.style_dotted, text="", text_size=size.small, text_color=color.new(s.boxCol, 30), text_halign=text.align_center, text_valign=text.align_bottom)
+                regBox(s.rangeBox)
+        if is_ses and not sesStart
+            s.hi := math.max(s.hi, high)
+            s.lo := math.min(s.lo, low)
+            if showSesRange and not na(s.rangeBox)
+                box.set_top(s.rangeBox, s.hi)
+                box.set_rightbottom(s.rangeBox, bar_index, s.lo)
+        if sesEnd and not na(s.hi) and not na(s.lo) and (s.hi - s.lo) > 0
+            bool shouldCreatePlan = true
+            float effHi = s.hi
+            float effLo = s.lo
+            int   effStartBar = s.startBar
+            string effName    = s.name
+            int planDow = dayofweek(time, tz)
+            bool tradeDayAllowed = switch planDow
+                dayofweek.sunday    => tradeSun
+                dayofweek.monday    => tradeMon
+                dayofweek.tuesday   => tradeTue
+                dayofweek.wednesday => tradeWed
+                dayofweek.thursday  => tradeThu
+                dayofweek.friday    => tradeFri
+                dayofweek.saturday  => tradeSat
+                => true
+            if shouldCreatePlan and tradeDayAllowed and not na(effHi) and not na(effLo) and (effHi - effLo) > 0
+                ocoCounter += 1
+                float sesRange = effHi - effLo
+                bool isSmallBox = false
+                string sesDisplayName = effName
+                if showSesRange and not na(s.rangeBox)
+                    box.set_text(s.rangeBox, sesDisplayName)
+                // BUY PLAN
+                float bEntry   = effHi
+                float bEntAdj  = bEntry + spreadPts
+                float bOneR    = oneRDistOf(sesRange)
+                float bSL      = slEdgeMode ? effLo : bEntAdj - bOneR
+                float bRisk    = math.abs(bEntAdj - bSL)
+                float bRewardBase = rrBaseMode == "SL Distance" ? bRisk : bOneR
+                float bTP      = bEntAdj + (bRewardBase * rrRatio)
+                float bLot     = bOneR > 0 ? riskAmount / (bOneR * pipValueRatio) : 0
+                float bTradeRR = bOneR > 0 ? math.abs(bTP - bEntAdj) / bOneR : 0
+                line bLine = line.new(x1=bar_index + 2, y1=bEntry, x2=bar_index + 10, y2=bEntry, color=color.blue, width=1, style=line.style_dashed)
+                line bTpLn = line.new(x1=bar_index + 2, y1=bTP, x2=bar_index + 10, y2=bTP, color=color.green, width=1, style=line.style_dashed)
+                line bSlLn = line.new(x1=bar_index + 2, y1=bSL, x2=bar_index + 10, y2=bSL, color=color.red, width=1, style=line.style_dashed)
+                box bTpBx  = box.new(left=effStartBar, top=bTP, right=bar_index + 10, bottom=bEntry, bgcolor=showTpSlBox ? color.new(color.green, 90) : color.new(color.green, 100), border_color=showTpSlBox ? color.new(color.green, 50) : color.new(color.green, 100))
+                box bSlBx  = box.new(left=effStartBar, top=bEntry, right=bar_index + 10, bottom=bSL, bgcolor=showTpSlBox ? color.new(color.red, 90) : color.new(color.red, 100), border_color=showTpSlBox ? color.new(color.red, 50) : color.new(color.red, 100))
+                string bTxt = "ออเดอร์ที่ 1 Buy Stop\\nEntry: " + str.tostring(bEntry, format.mintick) + "\\nTP: " + str.tostring(bTP, format.mintick) + "\\nSL: " + str.tostring(bSL, format.mintick) + "\\nLot: " + str.tostring(bLot, "#.##")
+                label bLab = label.new(x=bar_index + 15, y=bEntry, text=bTxt, color=color.new(color.green, 75), textcolor=color.white, style=label.style_label_left, size=orderLabelSize)
+                label bTpLb = label.new(x=bar_index + 10, y=bTP, text="TP ออเดอร์ที่ 1 " + str.tostring(bTP, format.mintick), color=color.new(color.green, 80), textcolor=color.green, style=label.style_label_left, size=orderLabelSizeSm)
+                label bSlLb = label.new(x=bar_index + 10, y=bSL, text="SL ออเดอร์ที่ 1 " + str.tostring(bSL, format.mintick), color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=orderLabelSizeSm)
+                regLine(bLine), regLine(bTpLn), regLine(bSlLn), regBox(bTpBx), regBox(bSlBx), regLabel(bLab), regLabel(bTpLb), regLabel(bSlLb)
+                array.push(pOcoId, ocoCounter), array.push(pSesName, effName), array.push(pIsBuy, true)
+                array.push(pEntry, bEntry), array.push(pSL, bSL), array.push(pTP, bTP), array.push(pLot, bLot), array.push(pTradeRR, bTradeRR), array.push(pIsSmall, isSmallBox), array.push(pSesRange, sesRange)
+                array.push(pTpBox, bTpBx), array.push(pSlBox, bSlBx), array.push(pLine, bLine), array.push(pTpLn, bTpLn), array.push(pSlLn, bSlLn), array.push(pLabel, bLab), array.push(pTpLbl, bTpLb), array.push(pSlLbl, bSlLb)
+                array.push(pState, 0), array.push(pCreateTime, time)
+                sigNewOrder := true
+                alert("ออเดอร์ที่ 1 Plan Buy Stop | Entry: " + str.tostring(bEntry, format.mintick) + " | TP: " + str.tostring(bTP, format.mintick) + " | SL: " + str.tostring(bSL, format.mintick) + " | Lot: " + str.tostring(bLot, "#.##"), alert.freq_once_per_bar_close)
+                // SELL PLAN
+                float sEntry   = effLo
+                float sEntAdj  = sEntry - spreadPts
+                float sOneR    = oneRDistOf(sesRange)
+                float sSL      = slEdgeMode ? effHi : sEntAdj + sOneR
+                float sRisk    = math.abs(sSL - sEntAdj)
+                float sRewardBase = rrBaseMode == "SL Distance" ? sRisk : sOneR
+                float sTP      = sEntAdj - (sRewardBase * rrRatio)
+                float sLot     = sOneR > 0 ? riskAmount / (sOneR * pipValueRatio) : 0
+                float sTradeRR = sOneR > 0 ? math.abs(sEntAdj - sTP) / sOneR : 0
+                line sLine = line.new(x1=bar_index + 2, y1=sEntry, x2=bar_index + 10, y2=sEntry, color=color.blue, width=1, style=line.style_dashed)
+                line sTpLn = line.new(x1=bar_index + 2, y1=sTP, x2=bar_index + 10, y2=sTP, color=color.green, width=1, style=line.style_dashed)
+                line sSlLn = line.new(x1=bar_index + 2, y1=sSL, x2=bar_index + 10, y2=sSL, color=color.red, width=1, style=line.style_dashed)
+                box sTpBx  = box.new(left=effStartBar, top=sEntry, right=bar_index + 10, bottom=sTP, bgcolor=showTpSlBox ? color.new(color.green, 90) : color.new(color.green, 100), border_color=showTpSlBox ? color.new(color.green, 50) : color.new(color.green, 100))
+                box sSlBx  = box.new(left=effStartBar, top=sSL, right=bar_index + 10, bottom=sEntry, bgcolor=showTpSlBox ? color.new(color.red, 90) : color.new(color.red, 100), border_color=showTpSlBox ? color.new(color.red, 50) : color.new(color.red, 100))
+                string sTxt = "ออเดอร์ที่ 1 Sell Stop\\nEntry: " + str.tostring(sEntry, format.mintick) + "\\nTP: " + str.tostring(sTP, format.mintick) + "\\nSL: " + str.tostring(sSL, format.mintick) + "\\nLot: " + str.tostring(sLot, "#.##")
+                label sLab = label.new(x=bar_index + 15, y=sEntry, text=sTxt, color=color.new(color.red, 75), textcolor=color.white, style=label.style_label_left, size=orderLabelSize)
+                label sTpLb = label.new(x=bar_index + 10, y=sTP, text="TP ออเดอร์ที่ 1 " + str.tostring(sTP, format.mintick), color=color.new(color.green, 80), textcolor=color.green, style=label.style_label_left, size=orderLabelSizeSm)
+                label sSlLb = label.new(x=bar_index + 10, y=sSL, text="SL ออเดอร์ที่ 1 " + str.tostring(sSL, format.mintick), color=color.new(color.red, 80), textcolor=color.red, style=label.style_label_left, size=orderLabelSizeSm)
+                regLine(sLine), regLine(sTpLn), regLine(sSlLn), regBox(sTpBx), regBox(sSlBx), regLabel(sLab), regLabel(sTpLb), regLabel(sSlLb)
+                array.push(pOcoId, ocoCounter), array.push(pSesName, effName), array.push(pIsBuy, false)
+                array.push(pEntry, sEntry), array.push(pSL, sSL), array.push(pTP, sTP), array.push(pLot, sLot), array.push(pTradeRR, sTradeRR), array.push(pIsSmall, isSmallBox), array.push(pSesRange, sesRange)
+                array.push(pTpBox, sTpBx), array.push(pSlBox, sSlBx), array.push(pLine, sLine), array.push(pTpLn, sTpLn), array.push(pSlLn, sSlLn), array.push(pLabel, sLab), array.push(pTpLbl, sTpLb), array.push(pSlLbl, sSlLb)
+                array.push(pState, 0), array.push(pCreateTime, time)
+                alert("ออเดอร์ที่ 1 Plan Sell Stop | Entry: " + str.tostring(sEntry, format.mintick) + " | TP: " + str.tostring(sTP, format.mintick) + " | SL: " + str.tostring(sSL, format.mintick) + " | Lot: " + str.tostring(sLot, "#.##"), alert.freq_once_per_bar_close)
+// ==========================================
+
+// --- 5. TRIGGER OCO BREAKOUT & DRAWINGS ---
+
+// ==========================================
+
+if array.size(pTpBox) > 0
+    for i = 0 to array.size(pTpBox) - 1
+        box.set_right(array.get(pTpBox, i), bar_index + 3)
+        box.set_right(array.get(pSlBox, i), bar_index + 3)
+        line.set_x2(array.get(pLine, i), bar_index + 3)
+if array.size(tSlBox) > 0
+    for i = 0 to array.size(tSlBox) - 1
+        box sb = array.get(tSlBox, i)
+        if not na(sb)
+            box.set_right(sb, bar_index + 3)
+// --- Plan Expiry Check ---
+
+if planExpireHours > 0 and array.size(pCreateTime) > 0
+    int expMs = math.round(planExpireHours * 3600000)
+    int ei = array.size(pCreateTime) - 1
+    while ei >= 0
+        if ei < array.size(pCreateTime) and (time - array.get(pCreateTime, ei)) > expMs
+            bool  isBExp = array.get(pIsBuy, ei)
+            float expY   = array.get(pEntry, ei)
+            int   expId  = array.get(pOcoId, ei)
+            string expSn = array.get(pSesName, ei)
+            regLabel(label.new(x=bar_index, y=expY, text="Expired", color=color.new(color.gray, 20), textcolor=color.white, style=isBExp ? label.style_label_down : label.style_label_up, size=orderLabelSize))
+            box.delete(array.get(pTpBox, ei))
+            box.delete(array.get(pSlBox, ei))
+            line.delete(array.get(pLine, ei))
+            line.delete(array.get(pTpLn, ei))
+            line.delete(array.get(pSlLn, ei))
+            label.delete(array.get(pTpLbl, ei))
+            label.delete(array.get(pSlLbl, ei))
+            label.delete(array.get(pLabel, ei))
+            array.remove(pOcoId, ei), array.remove(pSesName, ei), array.remove(pIsBuy, ei)
+            array.remove(pEntry, ei), array.remove(pSL, ei), array.remove(pTP, ei), array.remove(pLot, ei)
+            array.remove(pTradeRR, ei), array.remove(pIsSmall, ei), array.remove(pSesRange, ei)
+            array.remove(pTpBox, ei), array.remove(pSlBox, ei), array.remove(pLine, ei), array.remove(pTpLn, ei), array.remove(pSlLn, ei), array.remove(pTpLbl, ei), array.remove(pSlLbl, ei), array.remove(pLabel, ei)
+            array.remove(pState, ei), array.remove(pCreateTime, ei)
+            if array.size(pOcoId) > 0
+                for ej = array.size(pOcoId) - 1 to 0
+                    if array.get(pOcoId, ej) == expId
+                        box.delete(array.get(pTpBox, ej))
+                        box.delete(array.get(pSlBox, ej))
+                        line.delete(array.get(pLine, ej))
+                        line.delete(array.get(pTpLn, ej))
+                        line.delete(array.get(pSlLn, ej))
+                        label.delete(array.get(pTpLbl, ej))
+                        label.delete(array.get(pSlLbl, ej))
+                        label.delete(array.get(pLabel, ej))
+                        array.remove(pOcoId, ej), array.remove(pSesName, ej), array.remove(pIsBuy, ej)
+                        array.remove(pEntry, ej), array.remove(pSL, ej), array.remove(pTP, ej), array.remove(pLot, ej)
+                        array.remove(pTradeRR, ej), array.remove(pIsSmall, ej), array.remove(pSesRange, ej)
+                        array.remove(pTpBox, ej), array.remove(pSlBox, ej), array.remove(pLine, ej), array.remove(pTpLn, ej), array.remove(pSlLn, ej), array.remove(pTpLbl, ej), array.remove(pSlLbl, ej), array.remove(pLabel, ej)
+                        array.remove(pState, ej), array.remove(pCreateTime, ej)
+                        if ej < ei
+                            ei -= 1
+                        break
+        ei -= 1
+if array.size(pEntry) > 0
+    int i = array.size(pEntry) - 1
+    while i >= 0
+        if i < array.size(pEntry)
+            bool isB = array.get(pIsBuy, i)
+            float ent = array.get(pEntry, i)
+            float sl = array.get(pSL, i)
+            int state = array.get(pState, i)
+            float ocSesRange = array.get(pSesRange, i)
+            // Keep BUY/SELL STOP label + short dashed lines to the right of the current bar (moves each bar)
+            label pStopLb = array.get(pLabel, i)
+            if not na(pStopLb)
+                label.set_x(pStopLb, bar_index + 15)
+            line pEntLn2 = array.get(pLine, i)
+            if not na(pEntLn2)
+                line.set_x1(pEntLn2, bar_index + 2)
+                line.set_x2(pEntLn2, bar_index + 10)
+            line pTpLn2 = array.get(pTpLn, i)
+            if not na(pTpLn2)
+                line.set_x1(pTpLn2, bar_index + 2)
+                line.set_x2(pTpLn2, bar_index + 10)
+            line pSlLn2 = array.get(pSlLn, i)
+            if not na(pSlLn2)
+                line.set_x1(pSlLn2, bar_index + 2)
+                line.set_x2(pSlLn2, bar_index + 10)
+            label pTpLb2 = array.get(pTpLbl, i)
+            if not na(pTpLb2)
+                label.set_x(pTpLb2, bar_index + 10)
+            label pSlLb2 = array.get(pSlLbl, i)
+            if not na(pSlLb2)
+                label.set_x(pSlLb2, bar_index + 10)
+            // Show only the side the current price is nearer to (box split at the midline):
+            //  price in the UPPER half → show BUY STOP only; LOWER half → show SELL STOP only.
+            //  Toggles live each bar until one side fills. Hidden side = fully transparent.
+            float pMid = isB ? (ent - ocSesRange / 2) : (ent + ocSesRange / 2)
+            bool showThis = isB ? (close >= pMid) : (close < pMid)
+            color entShownCol = state == 1 ? color.fuchsia : state == 2 ? color.orange : color.blue
+            if not na(pStopLb)
+                label.set_color(pStopLb, showThis ? color.new(isB ? color.green : color.red, 75) : color.new(color.gray, 100))
+                label.set_textcolor(pStopLb, showThis ? color.white : color.new(color.white, 100))
+            if not na(pEntLn2)
+                line.set_color(pEntLn2, showThis ? entShownCol : color.new(color.blue, 100))
+            if not na(pTpLn2)
+                line.set_color(pTpLn2, showThis ? color.green : color.new(color.green, 100))
+            if not na(pSlLn2)
+                line.set_color(pSlLn2, showThis ? color.red : color.new(color.red, 100))
+            if not na(pTpLb2)
+                label.set_color(pTpLb2, showThis ? color.new(color.green, 80) : color.new(color.green, 100))
+                label.set_textcolor(pTpLb2, showThis ? color.green : color.new(color.green, 100))
+            if not na(pSlLb2)
+                label.set_color(pSlLb2, showThis ? color.new(color.red, 80) : color.new(color.red, 100))
+                label.set_textcolor(pSlLb2, showThis ? color.red : color.new(color.red, 100))
+            float pbRangePct = pullbackRangePct / 100
+            float pbDist  = ocSesRange * pbRangePct
+            float pbPrice = isB ? ent - pbDist : ent + pbDist
+            bool triggered  = false
+            // === Modes 2, 3: Pullback level–based ===
+            if usePbLevel
+                if state == 0
+                    if (isB and high > ent) or (not isB and low < ent)
+                        array.set(pState, i, 1)
+                        line pL = array.get(pLine, i)
+                        if not na(pL)
+                            line.set_y1(pL, pbPrice)
+                            line.set_y2(pL, pbPrice)
+                            line.set_color(pL, color.fuchsia)
+                            line.set_style(pL, line.style_dotted)
+                        label pLb = array.get(pLabel, i)
+                        if not na(pLb)
+                            string pbShowStr = str.tostring(pullbackRangePct, "#.#") + "% of Range"
+                            label.set_text(pLb, label.get_text(pLb) + "\\n(Wait Pullback " + pbShowStr + ")")
+                            label.set_color(pLb, color.new(color.fuchsia, 10))
+                        regLabel(label.new(x=bar_index, y=ent, text="", style=label.style_circle, color=color.new(isB ? color.blue : color.red, 50), size=size.normal))
+                        regLabel(label.new(x=bar_index, y=ent, text="Break out\\nรอ pull back", style=isB ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 25), textcolor=color.white, size=orderLabelSize))
+                else if state == 1
+                    if (isB and low <= pbPrice) or (not isB and high >= pbPrice)
+                        if usePbRebreak
+                            array.set(pState, i, 2)
+                            line pL2 = array.get(pLine, i)
+                            if not na(pL2)
+                                line.set_y1(pL2, ent)
+                                line.set_y2(pL2, ent)
+                                line.set_color(pL2, color.orange)
+                                line.set_style(pL2, line.style_dashed)
+                            label pLb2 = array.get(pLabel, i)
+                            if not na(pLb2)
+                                label.set_text(pLb2, label.get_text(pLb2) + "\\n(Wait Re-break)")
+                                label.set_color(pLb2, color.new(color.orange, 10))
+                            string pbSesNm2 = array.get(pSesName, i)
+                            regLabel(label.new(x=bar_index, y=pbPrice, text="Pullback ✓\\nรอ Re-break", style=isB ? label.style_label_up : label.style_label_down, color=color.new(color.fuchsia, 25), textcolor=color.white, size=orderLabelSize))
+                            regLine(line.new(x1=bar_index - 3, y1=pbPrice, x2=bar_index + 6, y2=pbPrice, color=color.new(color.fuchsia, 20), width=3, style=line.style_solid))
+                        else
+                            // Mode 2: Pullback, continue same direction
+                            triggered := true
+                            ent := pbPrice
+                else if state == 2
+                    if (isB and high > ent) or (not isB and low < ent)
+                        triggered := true
+            // === Mode 1: Pure Breakout ===
+            else
+                if isB and high > ent
+                    triggered := true
+                else if not isB and low < ent
+                    triggered := true
+            if triggered
+                bool actIsB = isB
+                // Spread: ปรับ entry ตามทิศทาง (BUY +spread, SELL -spread)
+                ent += actIsB ? spreadPts : -spreadPts
+                // Unified 1R: ใช้เป็นไม้บรรทัดสำหรับ TP, R:R และ lot sizing
+                float oneR = oneRDistOf(ocSesRange)
+                // SL placement:
+                //  - slEdgeMode: sl วางที่ขอบกรอบ (ใช้ pEntry เดิมเป็น anchor เพราะ ent อาจเปลี่ยนหลัง pullback)
+                //  - default: sl = ent ± 1R (SL = 1R เป๊ะ)
+                if slEdgeMode
+                    float pOrig = array.get(pEntry, i)
+                    sl := actIsB ? pOrig - ocSesRange : pOrig + ocSesRange
+                else
+                    sl := actIsB ? ent - oneR : ent + oneR
+                int id = array.get(pOcoId, i)
+                float tp = array.get(pTP, i)
+                string sName = array.get(pSesName, i)
+                float lotSize = array.get(pLot, i)
+                float tradeRR = array.get(pTradeRR, i)
+                bool smallMode = array.get(pIsSmall, i)
+                // R-metric distance = 1R เสมอ (ใช้คำนวณ TP, lot); actual SL distance (dist) อาจใหญ่กว่าเมื่อ Edge SL
+                float dist = math.abs(ent - sl)
+                float rDist = oneR
+                // Recalc TP/lot/tradeRR: TP = entry ± (1R × R:R), lot = riskAmount / (1R × pipValue)
+                bool needRecalc = usePullback
+                if needRecalc
+                    float rewardBase = rrBaseMode == "SL Distance" ? dist : rDist
+                    tp := actIsB ? ent + (rewardBase * rrRatio) : ent - (rewardBase * rrRatio)
+                    lotSize := rDist > 0 ? riskAmount / (rDist * pipValueRatio) : 0
+                    tradeRR := rDist > 0 ? math.abs(ent - tp) / rDist : 0
+                box slBoxRef = array.get(pSlBox, i)
+                array.push(tIsBuy, actIsB)
+                array.push(tEntry, ent)
+                array.push(tSL, sl)
+                array.push(tTP, tp)
+                array.push(tBarIdx, bar_index)
+                array.push(tPipsDist, rDist)
+                array.push(tTradeRR, tradeRR)
+                array.push(tIsSmall, smallMode)
+                array.push(tIsRec, false)
+                array.push(tIs2nd, false)
+                array.push(tIsAddon, false)
+                array.push(tTrailed, false)
+                array.push(tSlR, -1.0)
+                array.push(tSlBox, slBoxRef)
+                array.push(tTrailLn, na)
+                array.push(tAoTpLbl, na), array.push(tAoSlLbl, na), array.push(tAoTpLn, na), array.push(tAoSlLn, na), array.push(tAddonTPd, false)
+                array.push(tSesRange, ocSesRange)
+                array.push(tSesName, sName)
+                array.push(tOriginTime, time)
+                array.push(tOrigEntry, array.get(pEntry, i))
+                string modeTag = usePbRebreak ? " [Re-break]" : usePullback ? " [Pullback]" : ""
+                string mainDir = actIsB ? "BUY" : "SELL"
+                sigFilled := true
+                alert("ออเดอร์ที่ 1 Confirm " + mainDir + modeTag + " | Entry: " + str.tostring(ent, format.mintick) + " | TP: " + str.tostring(tp, format.mintick) + " | SL: " + str.tostring(sl, format.mintick) + " | Lot: " + str.tostring(lotSize, "#.##"), alert.freq_once_per_bar)
+                // 50% Add-on: arm a pending add-on at mid-box (TP = main entry, SL = main SL)
+                if useAddOn50
+                    float aoMid = actIsB ? (array.get(pEntry, i) - ocSesRange / 2) : (array.get(pEntry, i) + ocSesRange / 2)
+                    bool aoValid = actIsB ? (ent > aoMid and sl < aoMid) : (ent < aoMid and sl > aoMid)
+                    if aoValid
+                        array.push(aoIsBuy, actIsB)
+                        array.push(aoLevel, aoMid)
+                        array.push(aoTP, ent)
+                        array.push(aoSL, sl)
+                        array.push(aoSesRange, ocSesRange)
+                        array.push(aoSesName, sName)
+                        array.push(aoOriginTime, time)
+                        array.push(aoIsSmall, smallMode)
+                        // Purple dashed lines (main just filled): 50% entry + projected add-on TP/SL — move with the bar until add-on fills/cancels
+                        float aoProjSl  = sl
+                        float aoProjEnt = aoMid + (actIsB ? spreadPts : -spreadPts)
+                        float aoProjTp  = aoTpMode == "R:R Ratio" ? (actIsB ? aoProjEnt + math.abs(aoProjEnt - sl) * aoRR : aoProjEnt - math.abs(aoProjEnt - sl) * aoRR) : ent
+                        float aoProjRiskD = math.abs(aoProjEnt - aoProjSl)
+                        float aoProjLot = aoProjRiskD > 0 ? riskAmount / (aoProjRiskD * pipValueRatio) : 0
+                        array.push(aoLn,   line.new(x1=bar_index + 2, y1=aoMid,    x2=bar_index + 10, y2=aoMid,    color=color.new(color.purple, 20), width=1, style=line.style_dashed))
+                        array.push(aoTpLn, line.new(x1=bar_index + 2, y1=aoProjTp, x2=bar_index + 10, y2=aoProjTp, color=color.new(color.purple, 20), width=1, style=line.style_dashed))
+                        array.push(aoSlLn, line.new(x1=bar_index + 2, y1=aoProjSl, x2=bar_index + 10, y2=aoProjSl, color=color.new(color.purple, 20), width=1, style=line.style_dashed))
+                        label aoLbNew   = label.new(x=bar_index + 15, y=aoMid,    text="ออเดอร์ที่ 2 รอ " + (actIsB ? "Buy" : "Sell") + " Limit\\nEntry: " + str.tostring(aoProjEnt, format.mintick) + "\\nLot: " + str.tostring(aoProjLot, "#.##"), style=label.style_label_left, color=color.new(color.purple, 70), textcolor=(actIsB ? color.green : color.red), size=orderLabelSizeSm)
+                        label aoTpLbNew = label.new(x=bar_index + 15, y=aoProjTp, text="TP ออเดอร์ที่ 2 " + str.tostring(aoProjTp, format.mintick), style=label.style_label_left, color=color.new(color.purple, 70), textcolor=color.green, size=orderLabelSizeSm)
+                        label aoSlLbNew = label.new(x=bar_index + 15, y=aoProjSl, text="SL ออเดอร์ที่ 2 " + str.tostring(aoProjSl, format.mintick), style=label.style_label_left, color=color.new(color.purple, 70), textcolor=color.red, size=orderLabelSizeSm)
+                        regLabel(aoLbNew), regLabel(aoTpLbNew), regLabel(aoSlLbNew)
+                        array.push(aoLb, aoLbNew), array.push(aoTpLb, aoTpLbNew), array.push(aoSlLb, aoSlLbNew)
+                    else
+                        // Geometry impossible: SL is narrower than 50% of the box, so the main
+                        // would hit SL before price returns to 50% → add-on can never open.
+                        regLabel(label.new(x=bar_index, y=ent, text="⚠ Add-on ไม่ทำงาน (SL แคบเกินไป)", style=actIsB ? label.style_label_down : label.style_label_up, color=color.new(color.orange, 20), textcolor=color.white, size=size.small))
+                box.set_bgcolor(array.get(pTpBox, i), showTpSlBox ? color.new(color.green, 80) : color.new(color.green, 100))
+                box.set_border_color(array.get(pTpBox, i), showTpSlBox ? color.green : color.new(color.green, 100))
+                if needRecalc
+                    box.set_top(array.get(pTpBox, i), actIsB ? tp : ent)
+                    box.set_bottom(array.get(pTpBox, i), actIsB ? ent : tp)
+                    box.set_top(slBoxRef, actIsB ? ent : sl)
+                    box.set_bottom(slBoxRef, actIsB ? sl : ent)
+                box.set_bgcolor(slBoxRef, showTpSlBox ? color.new(color.red, 80) : color.new(color.red, 100))
+                box.set_border_color(slBoxRef, showTpSlBox ? color.red : color.new(color.red, 100))
+                box.set_right(array.get(pTpBox, i), bar_index + 15)
+                box.set_right(slBoxRef, bar_index + 15)
+                line.delete(array.get(pLine, i))
+                line.delete(array.get(pTpLn, i))
+                line.delete(array.get(pSlLn, i))
+                label.delete(array.get(pTpLbl, i))
+                label.delete(array.get(pSlLbl, i))
+                label.delete(array.get(pLabel, i))
+                string infoText = "ออเดอร์ที่ 1 Confirm " + (actIsB ? "Buy" : "Sell") + "\\nSize: " + str.tostring(lotSize, "#.##") + " Lots"
+                regLabel(label.new(x=bar_index, y=ent, text=infoText, color=color.new(color.black, 65), textcolor=color.new(color.white, 20), style=actIsB ? label.style_label_up : label.style_label_down, size=orderLabelSize))
+                // Feature 1 (Breakout-family modes: 1, 3): วงกลม + ข้อความที่ราคาเบรค
+                if not usePullback or usePbRebreak
+                    string brkLbl = usePbRebreak ? "Re-break" : "Break out"
+                    regLabel(label.new(x=bar_index, y=ent, text="", style=label.style_circle, color=color.new(actIsB ? color.blue : color.red, 50), size=size.normal))
+                    regLabel(label.new(x=bar_index, y=ent, text=brkLbl, style=actIsB ? label.style_label_down : label.style_label_up, color=color.new(color.gray, 25), textcolor=color.white, size=orderLabelSize))
+                // Feature 2: วงกลมจางๆ ที่ราคา entry จริง
+                regLabel(label.new(x=bar_index, y=ent, text="", style=label.style_circle, color=color.new(actIsB ? color.green : color.red, 70), size=size.large))
+                // Feature 3: ลูกศรโปร่งแสงจาก entry → TP และ SL
+                line tpArrowLn = line.new(x1=bar_index, y1=ent, x2=bar_index, y2=tp, color=color.new(color.green, 70), width=1, style=line.style_arrow_right)
+                line slArrowLn = line.new(x1=bar_index, y1=ent, x2=bar_index, y2=sl, color=color.new(color.red, 70), width=1, style=line.style_arrow_right)
+                regLine(tpArrowLn)
+                regLine(slArrowLn)
+                // Feature 4: เส้นแนวนอนสั้น + ราคา ที่ Entry / TP / SL
+                string fmtEnt = str.tostring(ent, format.mintick)
+                string fmtTp  = str.tostring(tp, format.mintick)
+                string fmtSl  = str.tostring(sl, format.mintick)
+                regLine(line.new(x1=bar_index, y1=ent, x2=bar_index + 6, y2=ent, color=color.new(actIsB ? color.green : color.red, 30), width=2))
+                line mainFillTpLn = line.new(x1=bar_index, y1=tp, x2=bar_index + 6, y2=tp, color=color.new(color.green, 30), width=2)
+                line mainFillSlLn = line.new(x1=bar_index, y1=sl, x2=bar_index + 6, y2=sl, color=color.new(color.red, 30), width=2)
+                regLine(mainFillTpLn), regLine(mainFillSlLn)
+                regLabel(label.new(x=bar_index + 6, y=ent, text=fmtEnt, style=label.style_label_left, color=color.new(actIsB ? color.green : color.red, 80), textcolor=actIsB ? color.green : color.red, size=size.small))
+                label mainFillTpLbl = label.new(x=bar_index + 6, y=tp, text="TP ออเดอร์ที่ 1 " + fmtTp, style=label.style_label_left, color=color.new(color.green, 80), textcolor=color.green, size=size.small)
+                label mainFillSlLbl = label.new(x=bar_index + 6, y=sl, text="SL ออเดอร์ที่ 1 " + fmtSl, style=label.style_label_left, color=color.new(color.red, 80), textcolor=color.red, size=size.small)
+                regLabel(mainFillTpLbl), regLabel(mainFillSlLbl)
+                array.set(tAoTpLbl, array.size(tAoTpLbl) - 1, mainFillTpLbl)
+                array.set(tAoSlLbl, array.size(tAoSlLbl) - 1, mainFillSlLbl)
+                array.set(tAoTpLn,  array.size(tAoTpLn)  - 1, mainFillTpLn)
+                array.set(tAoSlLn,  array.size(tAoSlLn)  - 1, mainFillSlLn)
+                // === เสมอ: ลบ pending + cancel OCO คู่ ===
+                array.remove(pOcoId, i), array.remove(pSesName, i), array.remove(pIsBuy, i)
+                array.remove(pEntry, i), array.remove(pSL, i), array.remove(pTP, i), array.remove(pLot, i)
+                array.remove(pTradeRR, i), array.remove(pIsSmall, i), array.remove(pSesRange, i)
+                array.remove(pTpBox, i), array.remove(pSlBox, i), array.remove(pLine, i), array.remove(pTpLn, i), array.remove(pSlLn, i), array.remove(pTpLbl, i), array.remove(pSlLbl, i), array.remove(pLabel, i)
+                array.remove(pState, i), array.remove(pCreateTime, i)
+                if array.size(pOcoId) > 0
+                    for j = array.size(pOcoId) - 1 to 0
+                        if array.get(pOcoId, j) == id
+                            box.delete(array.get(pTpBox, j))
+                            box.delete(array.get(pSlBox, j))
+                            line.delete(array.get(pLine, j))
+                            line.delete(array.get(pTpLn, j))
+                            line.delete(array.get(pSlLn, j))
+                            label.delete(array.get(pTpLbl, j))
+                            label.delete(array.get(pSlLbl, j))
+                            label.delete(array.get(pLabel, j))
+                            array.remove(pOcoId, j), array.remove(pSesName, j), array.remove(pIsBuy, j)
+                            array.remove(pEntry, j), array.remove(pSL, j), array.remove(pTP, j), array.remove(pLot, j)
+                            array.remove(pTradeRR, j), array.remove(pIsSmall, j), array.remove(pSesRange, j)
+                            array.remove(pTpBox, j), array.remove(pSlBox, j), array.remove(pLine, j), array.remove(pTpLn, j), array.remove(pSlLn, j), array.remove(pTpLbl, j), array.remove(pSlLbl, j), array.remove(pLabel, j)
+                            array.remove(pState, j), array.remove(pCreateTime, j)
+                            if j < i
+                                i -= 1
+                            break
+        i -= 1
+// ==========================================
+
+// --- 5B. 2ND ORDER RE-BREAK TRIGGER ---
+
+// ==========================================
+
+if use2ndOrder and array.size(p2Entry) > 0
+    int p2i = array.size(p2Entry) - 1
+    while p2i >= 0
+        bool p2IsB       = array.get(p2IsBuy, p2i)
+        float p2Ent      = array.get(p2Entry, p2i)
+        float p2Range    = array.get(p2SesRange, p2i)
+        string p2Name    = array.get(p2SesName, p2i)
+        bool p2Small     = array.get(p2IsSmall, p2i)
+        float p2Orig     = array.get(p2OrigEntry, p2i)
+        // keep the pending re-break line + label + TP/SL preview lines tracking the current bar
+        line p2ExLn = array.get(p2PendLn, p2i)
+        if not na(p2ExLn)
+            line.set_x1(p2ExLn, bar_index + 2)
+            line.set_x2(p2ExLn, bar_index + 20)
+        line p2ExTp = array.get(p2PendTpLn, p2i)
+        if not na(p2ExTp)
+            line.set_x1(p2ExTp, bar_index + 2)
+            line.set_x2(p2ExTp, bar_index + 20)
+        line p2ExSl = array.get(p2PendSlLn, p2i)
+        if not na(p2ExSl)
+            line.set_x1(p2ExSl, bar_index + 2)
+            line.set_x2(p2ExSl, bar_index + 20)
+        label p2ExLb = array.get(p2PendLb, p2i)
+        if not na(p2ExLb)
+            label.set_x(p2ExLb, bar_index + 20)
+        label p2ExTpLb = array.get(p2PendTpLb, p2i)
+        if not na(p2ExTpLb)
+            label.set_x(p2ExTpLb, bar_index + 20)
+        label p2ExSlLb = array.get(p2PendSlLb, p2i)
+        if not na(p2ExSlLb)
+            label.set_x(p2ExSlLb, bar_index + 20)
+        bool p2Triggered = p2IsB ? (high >= p2Ent) : (low <= p2Ent)
+        if p2Triggered
+            // Spread: ปรับ entry ตามทิศทาง
+            p2Ent += p2IsB ? spreadPts : -spreadPts
+            float p2OneR    = oneRDistOf(p2Range)
+            float p2SLprice = slEdgeMode ? (p2IsB ? p2Orig - p2Range : p2Orig + p2Range) : (p2IsB ? p2Ent - p2OneR : p2Ent + p2OneR)
+            float p2RiskD   = math.abs(p2Ent - p2SLprice)
+            float p2RR = use2ndCustomRR ? secondRR : rrRatio
+            float p2RewardBase = rrBaseMode == "SL Distance" ? p2RiskD : p2OneR
+            float p2TPprice = p2IsB ? p2Ent + (p2RewardBase * p2RR) : p2Ent - (p2RewardBase * p2RR)
+            float p2Lot     = p2OneR > 0 ? riskAmount / (p2OneR * pipValueRatio) : 0
+            float p2TrdRR   = p2OneR > 0 ? math.abs(p2TPprice - p2Ent) / p2OneR : 0
+            box p2TpBx = box.new(left=bar_index, top=p2IsB ? p2TPprice : p2Ent, right=bar_index + 15, bottom=p2IsB ? p2Ent : p2TPprice, bgcolor=showTpSlBox ? color.new(color.green, 88) : color.new(color.green, 100), border_color=showTpSlBox ? color.new(color.green, 50) : color.new(color.green, 100))
+            box p2SlBx = box.new(left=bar_index, top=p2IsB ? p2Ent : p2SLprice, right=bar_index + 15, bottom=p2IsB ? p2SLprice : p2Ent, bgcolor=showTpSlBox ? color.new(color.red, 88) : color.new(color.red, 100), border_color=showTpSlBox ? color.new(color.red, 50) : color.new(color.red, 100))
+            regBox(p2TpBx), regBox(p2SlBx)
+            array.push(tIsBuy, p2IsB)
+            array.push(tEntry, p2Ent)
+            array.push(tSL, p2SLprice)
+            array.push(tTP, p2TPprice)
+            array.push(tBarIdx, bar_index)
+            array.push(tPipsDist, p2OneR)
+            array.push(tTradeRR, p2TrdRR)
+            array.push(tIsSmall, p2Small)
+            array.push(tIsRec, false)
+            array.push(tIs2nd, true)
+            array.push(tIsAddon, false)
+            array.push(tTrailed, false)
+            array.push(tSlR, -1.0)
+            array.push(tSlBox, p2SlBx)
+            array.push(tTrailLn, na)
+            array.push(tAoTpLbl, na), array.push(tAoSlLbl, na), array.push(tAoTpLn, na), array.push(tAoSlLn, na), array.push(tAddonTPd, false)
+            array.push(tSesRange, p2Range)
+            array.push(tSesName, p2Name)
+            array.push(tOriginTime, time)
+            array.push(tOrigEntry, p2Orig)
+            sig2ndOpen := true
+            alert("ออเดอร์ที่ 3 " + (p2IsB ? "Buy" : "Sell") + " | Entry: " + str.tostring(p2Ent, format.mintick) + " | TP: " + str.tostring(p2TPprice, format.mintick) + " | SL: " + str.tostring(p2SLprice, format.mintick) + " | Lot: " + str.tostring(p2Lot, "#.##"), alert.freq_once_per_bar)
+            string p2InfoText = "ออเดอร์ที่ 3 " + (p2IsB ? "Buy" : "Sell") + "\\nSize: " + str.tostring(p2Lot, "#.##") + " Lots\\nTP: " + str.tostring(p2TrdRR, "#.##") + "R"
+            regLabel(label.new(x=bar_index, y=p2Ent, text=p2InfoText, color=color.new(color.yellow, 60), textcolor=color.black, style=p2IsB ? label.style_label_up : label.style_label_down, size=orderLabelSize))
+            regLabel(label.new(x=bar_index, y=p2Ent, text="", style=label.style_circle, color=color.new(color.yellow, 60), size=size.large))
+            line p2TpArr = line.new(x1=bar_index, y1=p2Ent, x2=bar_index, y2=p2TPprice, color=color.new(color.green, 70), width=1, style=line.style_arrow_right)
+            line p2SlArr = line.new(x1=bar_index, y1=p2Ent, x2=bar_index, y2=p2SLprice, color=color.new(color.red, 70), width=1, style=line.style_arrow_right)
+            regLine(p2TpArr), regLine(p2SlArr)
+            string p2FmtEnt = str.tostring(p2Ent, format.mintick)
+            string p2FmtTp  = str.tostring(p2TPprice, format.mintick)
+            string p2FmtSl  = str.tostring(p2SLprice, format.mintick)
+            regLine(line.new(x1=bar_index, y1=p2Ent, x2=bar_index + 20, y2=p2Ent, color=color.new(color.yellow, 30), width=2))
+            line p2FillTpLn = line.new(x1=bar_index, y1=p2TPprice, x2=bar_index + 20, y2=p2TPprice, color=color.new(color.yellow, 30), width=2)
+            line p2FillSlLn = line.new(x1=bar_index, y1=p2SLprice, x2=bar_index + 20, y2=p2SLprice, color=color.new(color.yellow, 30), width=2)
+            regLine(p2FillTpLn), regLine(p2FillSlLn)
+            regLabel(label.new(x=bar_index + 20, y=p2Ent, text=p2FmtEnt, style=label.style_label_left, color=color.new(color.yellow, 40), textcolor=color.black, size=size.small))
+            label p2FillTpLbl = label.new(x=bar_index + 20, y=p2TPprice, text="TP ออเดอร์ที่ 3 " + p2FmtTp, style=label.style_label_left, color=color.new(color.yellow, 40), textcolor=color.black, size=size.small)
+            label p2FillSlLbl = label.new(x=bar_index + 20, y=p2SLprice, text="SL ออเดอร์ที่ 3 " + p2FmtSl, style=label.style_label_left, color=color.new(color.yellow, 40), textcolor=color.black, size=size.small)
+            regLabel(p2FillTpLbl), regLabel(p2FillSlLbl)
+            array.set(tAoTpLbl, array.size(tAoTpLbl) - 1, p2FillTpLbl)
+            array.set(tAoSlLbl, array.size(tAoSlLbl) - 1, p2FillSlLbl)
+            array.set(tAoTpLn,  array.size(tAoTpLn)  - 1, p2FillTpLn)
+            array.set(tAoSlLn,  array.size(tAoSlLn)  - 1, p2FillSlLn)
+            // pending re-break preview has become a live order → remove its line + label
+            line.delete(array.get(p2PendLn, p2i))
+            line.delete(array.get(p2PendTpLn, p2i))
+            line.delete(array.get(p2PendSlLn, p2i))
+            label.delete(array.get(p2PendLb, p2i))
+            label.delete(array.get(p2PendTpLb, p2i))
+            label.delete(array.get(p2PendSlLb, p2i))
+            array.remove(p2IsBuy, p2i), array.remove(p2Entry, p2i), array.remove(p2SesRange, p2i)
+            array.remove(p2SesName, p2i), array.remove(p2OriginTime, p2i), array.remove(p2IsSmall, p2i), array.remove(p2OrigEntry, p2i), array.remove(p2PendLn, p2i), array.remove(p2PendLb, p2i)
+            array.remove(p2PendTpLn, p2i), array.remove(p2PendSlLn, p2i), array.remove(p2PendTpLb, p2i), array.remove(p2PendSlLb, p2i)
+        p2i -= 1
+// ==========================================
+
+// --- 5C. 50% ADD-ON TRIGGER ---
+
+// ==========================================
+
+if useAddOn50 and array.size(aoLevel) > 0
+    int aoi = array.size(aoLevel) - 1
+    while aoi >= 0
+        bool  aIsB      = array.get(aoIsBuy, aoi)
+        float aLvl      = array.get(aoLevel, aoi)
+        int   aOrigTime = array.get(aoOriginTime, aoi)
+        string aName    = array.get(aoSesName, aoi)
+        // Keep the purple dashed add-on lines (entry/TP/SL) to the right of the current bar (moves each bar)
+        line aExistLn = array.get(aoLn, aoi)
+        if not na(aExistLn)
+            line.set_x1(aExistLn, bar_index + 2)
+            line.set_x2(aExistLn, bar_index + 10)
+        line aExistTp = array.get(aoTpLn, aoi)
+        if not na(aExistTp)
+            line.set_x1(aExistTp, bar_index + 2)
+            line.set_x2(aExistTp, bar_index + 10)
+        line aExistSl = array.get(aoSlLn, aoi)
+        if not na(aExistSl)
+            line.set_x1(aExistSl, bar_index + 2)
+            line.set_x2(aExistSl, bar_index + 10)
+        // Require a bar strictly AFTER the arming (breakout) bar — a breakout bar that also
+        // wicks to the 50% level must not open the add-on on the same bar.
+        bool aHit = time > aOrigTime and (aIsB ? (low <= aLvl) : (high >= aLvl))
+        if aHit
+            // Only open add-on if the MAIN order is still live (not yet TP/SL)
+            bool mainAlive = false
+            int  mainIdx   = -1
+            if array.size(tOriginTime) > 0
+                for k = 0 to array.size(tOriginTime) - 1
+                    if not array.get(tIs2nd, k) and not array.get(tIsRec, k) and array.get(tIsBuy, k) == aIsB and array.get(tOriginTime, k) == aOrigTime and array.get(tSesName, k) == aName
+                        mainAlive := true
+                        mainIdx   := k
+                        break
+            if mainAlive
+                float aRange    = array.get(aoSesRange, aoi)
+                bool  aSmall    = array.get(aoIsSmall, aoi)
+                float aEntry    = aLvl + (aIsB ? spreadPts : -spreadPts)
+                float aSLprice  = array.get(aoSL, aoi)   // same SL as main
+                float aRiskD    = math.abs(aEntry - aSLprice)
+                float aTPprice  = aoTpMode == "R:R Ratio" ? (aIsB ? aEntry + aRiskD * aoRR : aEntry - aRiskD * aoRR) : array.get(aoTP, aoi)
+                float aLot      = aRiskD > 0 ? riskAmount / (aRiskD * pipValueRatio) : 0
+                float aTrdRR    = aRiskD > 0 ? math.abs(aTPprice - aEntry) / aRiskD : 0
+                box aTpBx = box.new(left=bar_index, top=aIsB ? aTPprice : aEntry, right=bar_index + 15, bottom=aIsB ? aEntry : aTPprice, bgcolor=showTpSlBox ? color.new(color.purple, 88) : color.new(color.purple, 100), border_color=showTpSlBox ? color.new(color.purple, 50) : color.new(color.purple, 100))
+                box aSlBx = box.new(left=bar_index, top=aIsB ? aEntry : aSLprice, right=bar_index + 15, bottom=aIsB ? aSLprice : aEntry, bgcolor=showTpSlBox ? color.new(color.purple, 88) : color.new(color.purple, 100), border_color=showTpSlBox ? color.new(color.purple, 50) : color.new(color.purple, 100))
+                regBox(aTpBx), regBox(aSlBx)
+                array.push(tIsBuy, aIsB)
+                array.push(tEntry, aEntry)
+                array.push(tSL, aSLprice)
+                array.push(tTP, aTPprice)
+                array.push(tBarIdx, bar_index)
+                array.push(tPipsDist, aRiskD)
+                array.push(tTradeRR, aTrdRR)
+                array.push(tIsSmall, aSmall)
+                array.push(tIsRec, false)
+                array.push(tIs2nd, true)
+                array.push(tIsAddon, true)
+                array.push(tTrailed, false)
+                array.push(tSlR, -1.0)
+                array.push(tSlBox, aSlBx)
+                array.push(tTrailLn, na)
+                array.push(tAoTpLbl, na), array.push(tAoSlLbl, na), array.push(tAoTpLn, na), array.push(tAoSlLn, na), array.push(tAddonTPd, false)
+                array.push(tSesRange, aRange)
+                array.push(tSesName, aName)
+                array.push(tOriginTime, time)
+                array.push(tOrigEntry, array.get(aoTP, aoi))
+                sigAddOn := true
+                alert("ออเดอร์ที่ 2 Add-on " + (aIsB ? "Buy" : "Sell") + " | Entry: " + str.tostring(aEntry, format.mintick) + " | TP: " + str.tostring(aTPprice, format.mintick) + " | SL: " + str.tostring(aSLprice, format.mintick) + " | Lot: " + str.tostring(aLot, "#.##"), alert.freq_once_per_bar)
+                string aoTpTxt = aoTpMode == "R:R Ratio" ? str.tostring(aTrdRR, "#.##") + "R" : "ราคาทุน main"
+                string aInfoText = "ออเดอร์ที่ 2 Add-on " + (aIsB ? "Buy" : "Sell") + "\\nSize: " + str.tostring(aLot, "#.##") + " Lots\\nTP: " + aoTpTxt
+                regLabel(label.new(x=bar_index, y=aEntry, text=aInfoText, color=color.new(color.purple, 60), textcolor=color.white, style=aIsB ? label.style_label_up : label.style_label_down, size=orderLabelSize))
+                regLabel(label.new(x=bar_index, y=aEntry, text="", style=label.style_circle, color=color.new(color.purple, 70), size=size.large))
+                regLine(line.new(x1=bar_index, y1=aEntry, x2=bar_index, y2=aTPprice, color=color.new(color.purple, 70), width=1, style=line.style_dashed))
+                regLine(line.new(x1=bar_index, y1=aEntry, x2=bar_index, y2=aSLprice, color=color.new(color.purple, 70), width=1, style=line.style_dashed))
+                string aFmtEnt = str.tostring(aEntry, format.mintick)
+                string aFmtTp  = str.tostring(aTPprice, format.mintick)
+                string aFmtSl  = str.tostring(aSLprice, format.mintick)
+                regLine(line.new(x1=bar_index, y1=aEntry, x2=bar_index + 15, y2=aEntry, color=color.new(color.purple, 30), width=2, style=line.style_dashed))
+                line aoFillTpLn = line.new(x1=bar_index, y1=aTPprice, x2=bar_index + 15, y2=aTPprice, color=color.new(color.purple, 30), width=2, style=line.style_dashed)
+                line aoFillSlLn = line.new(x1=bar_index, y1=aSLprice, x2=bar_index + 15, y2=aSLprice, color=color.new(color.purple, 30), width=2, style=line.style_dashed)
+                regLine(aoFillTpLn), regLine(aoFillSlLn)
+                regLabel(label.new(x=bar_index + 15, y=aEntry, text=aFmtEnt, style=label.style_label_left, color=color.new(color.purple, 40), textcolor=color.white, size=size.small))
+                label aoFillTpLbl = label.new(x=bar_index + 15, y=aTPprice, text="TP ออเดอร์ที่ 2 " + aFmtTp, style=label.style_label_left, color=color.new(color.purple, 40), textcolor=color.white, size=size.small)
+                label aoFillSlLbl = label.new(x=bar_index + 15, y=aSLprice, text="SL ออเดอร์ที่ 2 " + aFmtSl, style=label.style_label_left, color=color.new(color.purple, 40), textcolor=color.white, size=size.small)
+                regLabel(aoFillTpLbl), regLabel(aoFillSlLbl)
+                array.set(tAoTpLbl, array.size(tAoTpLbl) - 1, aoFillTpLbl)
+                array.set(tAoSlLbl, array.size(tAoSlLbl) - 1, aoFillSlLbl)
+                array.set(tAoTpLn,  array.size(tAoTpLn)  - 1, aoFillTpLn)
+                array.set(tAoSlLn,  array.size(tAoSlLn)  - 1, aoFillSlLn)
+                // Move main TP to break-even (entry price) when toggle is on
+                if aoMainBE and mainIdx >= 0
+                    float mainEnt = array.get(tEntry, mainIdx)
+                    array.set(tTP, mainIdx, mainEnt)
+                    array.set(tTradeRR, mainIdx, 0.0)
+            // Remove pending (single-shot: opened, or main already closed)
+            line.delete(array.get(aoLn, aoi))
+            line.delete(array.get(aoTpLn, aoi))
+            line.delete(array.get(aoSlLn, aoi))
+            label.delete(array.get(aoLb, aoi))
+            label.delete(array.get(aoTpLb, aoi))
+            label.delete(array.get(aoSlLb, aoi))
+            array.remove(aoIsBuy, aoi), array.remove(aoLevel, aoi), array.remove(aoTP, aoi)
+            array.remove(aoSL, aoi), array.remove(aoSesRange, aoi), array.remove(aoSesName, aoi)
+            array.remove(aoOriginTime, aoi), array.remove(aoIsSmall, aoi), array.remove(aoLn, aoi), array.remove(aoTpLn, aoi), array.remove(aoSlLn, aoi)
+            array.remove(aoLb, aoi), array.remove(aoTpLb, aoi), array.remove(aoSlLb, aoi)
+        aoi -= 1
+// ==========================================
+
+// --- 5D. ALERT CONDITIONS (named alerts for TradingView's Create Alert dialog) ---
+
+// ==========================================
+
+// These make the indicator's events selectable by name in TradingView's normal
+// "Create Alert" → Condition dropdown, so a customer can route each to the app / email.
+// (The direct alert(...) calls above still work via "Any alert() function call".)
+alertcondition(sigNewOrder, title="เกิดออเดอร์ที่ 1 (Buy Stop / Sell Stop)", message="NPN-GOLD1-1: เกิดออเดอร์ที่ 1 (Buy Stop / Sell Stop) {{ticker}} {{interval}}")
+alertcondition(sigFilled,   title="ออเดอร์ที่ 1 ถูกเปิด (Confirm)",             message="NPN-GOLD1-1: ออเดอร์ที่ 1 ถูกเปิด (Confirm) {{ticker}} {{interval}}")
+alertcondition(sig2ndOpen,  title="เปิดออเดอร์ที่ 3 (Re-break)",                message="NPN-GOLD1-1: เปิดออเดอร์ที่ 3 (Re-break) {{ticker}} {{interval}}")
+alertcondition(sigAddOn,    title="เปิดออเดอร์ที่ 2 (Add-on)",                   message="NPN-GOLD1-1: เปิดออเดอร์ที่ 2 (Add-on) {{ticker}} {{interval}}")
+
+// ==========================================
+
+// --- 6. TRADE RESULTS & TRAILING SL & ADAPTIVE RECOVERY ---
+
+// ==========================================
+
+if array.size(tEntry) > 0
+    for i = array.size(tEntry) - 1 to 0
+        if bar_index > array.get(tBarIdx, i)
+            bool   isB       = array.get(tIsBuy, i)
+            float  ent       = array.get(tEntry, i)
+            float  sl        = array.get(tSL, i)
+            float  tp        = array.get(tTP, i)
+            bool   isRec     = array.get(tIsRec, i)
+            bool   is2nd     = array.get(tIs2nd, i)
+            bool   isAddon   = array.get(tIsAddon, i)
+            float  dist      = array.get(tPipsDist, i)
+            float  thisRR    = array.get(tTradeRR, i)
+            bool   smMode    = array.get(tIsSmall, i)
+            bool   trailed   = array.get(tTrailed, i)
+            float  slR       = array.get(tSlR, i)
+            float  sesRangeT = array.get(tSesRange, i)
+            string sNameT    = array.get(tSesName, i)
+            // === TRAILING SL CHECK ===
+            bool  trailEnabled  = useTrail
+            float trailTrigR    = trailTriggerR
+            float trailLockRUse = trailLockR
+            if trailEnabled and not trailed and dist > 0
+                float trigPrice = isB ? ent + (dist * trailTrigR)    : ent - (dist * trailTrigR)
+                float newSL     = isB ? ent + (dist * trailLockRUse) : ent - (dist * trailLockRUse)
+                bool trailHit = isB ? (high >= trigPrice) : (low <= trigPrice)
+                if trailHit
+                    array.set(tSL, i, newSL)
+                    array.set(tTrailed, i, true)
+                    array.set(tSlR, i, trailLockRUse)
+                    sl := newSL
+                    trailed := true
+                    slR := trailLockRUse
+                    box oldSlBx = array.get(tSlBox, i)
+                    if not na(oldSlBx)
+                        box.delete(oldSlBx)
+                        array.set(tSlBox, i, na)
+                    line tLn = line.new(x1=array.get(tBarIdx, i), y1=newSL, x2=bar_index + 10, y2=newSL, color=color.orange, width=2, style=line.style_solid)
+                    array.set(tTrailLn, i, tLn)
+                    regLine(tLn)
+                    string trTxt = "?? TRAIL SL → " + (trailLockRUse > 0 ? "+" : "") + str.tostring(trailLockRUse, "#.#") + "R"
+                    regLabel(label.new(x=bar_index, y=newSL, text=trTxt, color=color.new(color.orange, 15), textcolor=color.white, style=isB ? label.style_label_down : label.style_label_up, size=orderLabelSize))
+            line existTrLn = array.get(tTrailLn, i)
+            if not na(existTrLn)
+                line.set_x2(existTrLn, bar_index + 3)
+            // === WIN/LOSS CHECK ===
+            bool closedWin  = false
+            bool closedLoss = false
+            if isB
+                if low <= sl
+                    closedLoss := true
+                else if high >= tp
+                    closedWin := true
+            else
+                if high >= sl
+                    closedLoss := true
+                else if low <= tp
+                    closedWin := true
+            if closedWin or closedLoss
+                bool isTrailStop = closedLoss and trailed
+                // ระยะ SL จริง / ระยะ SL% (risk unit) → โหมดขอบที่กรอบกว้างกว่า SL% จะขาดทุนมากกว่า -1R
+                float lossR    = dist > 0 ? -(math.abs(ent - sl) / dist) : -1.0
+                float actualR = closedWin ? thisRR : (trailed ? slR : lossR)
+                bool statAsWin  = actualR > 0
+                string resultTag = isRec ? "Reco" : isAddon ? "ออเดอร์ที่ 2" : (is2nd ? "ออเดอร์ที่ 3" : "ออเดอร์ที่ 1")
+                // Offset add-on close labels so they don't overlap the main's label at the same price/bar
+                int   resLblX   = isAddon ? bar_index + 4 : bar_index
+                bool willRecover = false
+                bool recWillBeBuy = false
+                float closePts   = closedWin ? math.abs(tp - ent) : math.abs(sl - ent)
+                int   originTime = array.get(tOriginTime, i)
+                array.push(resIsWin, statAsWin)
+                array.push(resTradeRR, actualR)
+                array.push(resTime, originTime)
+                array.push(resIsSmall, smMode)
+                array.push(resIsRec, isRec)
+                array.push(resIs2nd, is2nd)
+                array.push(resTpPts, closePts)
+                if array.size(resIsWin) > 5000
+                    array.shift(resIsWin)
+                    array.shift(resTradeRR)
+                    array.shift(resTime)
+                    array.shift(resIsSmall)
+                    array.shift(resIsRec)
+                    array.shift(resIs2nd)
+                    array.shift(resTpPts)
+                if closedWin
+                    regLabel(label.new(x=resLblX, y=tp, text="Win " + resultTag + "\\n+" + str.tostring(thisRR, "#.##") + "R", color=color.new(color.green, 20), textcolor=color.white, style=isB ? label.style_label_down : label.style_label_up, size=orderLabelSize))
+                    regLine(line.new(x1=bar_index - 3, y1=tp, x2=bar_index + 3, y2=tp, color=color.green, width=2))
+                else if isTrailStop and slR > 0
+                    regLabel(label.new(x=resLblX, y=sl, text="Trail Win " + resultTag + "\\n+" + str.tostring(slR, "#.##") + "R", color=color.new(color.orange, 20), textcolor=color.white, style=isB ? label.style_label_up : label.style_label_down, size=orderLabelSize))
+                    regLine(line.new(x1=bar_index - 3, y1=sl, x2=bar_index + 3, y2=sl, color=color.orange, width=2))
+                else if isTrailStop and slR == 0
+                    regLabel(label.new(x=resLblX, y=sl, text="BE " + resultTag + "\\n0R", color=color.new(color.gray, 20), textcolor=color.white, style=isB ? label.style_label_up : label.style_label_down, size=orderLabelSize))
+                    regLine(line.new(x1=bar_index - 3, y1=sl, x2=bar_index + 3, y2=sl, color=color.gray, width=2))
+                else
+                    regLabel(label.new(x=resLblX, y=sl, text="Loss " + resultTag + "\\n" + str.tostring(lossR, "#.##") + "R", color=color.new(color.red, 20), textcolor=color.white, style=willRecover ? (recWillBeBuy ? label.style_label_down : label.style_label_up) : (isB ? label.style_label_up : label.style_label_down), size=orderLabelSize))
+                    regLine(line.new(x1=bar_index - 3, y1=sl, x2=bar_index + 3, y2=sl, color=color.red, width=2))
+                // === TRADE PATH LINE: จากบาร์เปิด → บาร์ปิด (TP หรือ SL) ===
+                if showTradePath
+                    float closePx = closedWin ? tp : sl
+                    color pathCol = closedWin ? color.new(color.green, 60) : isTrailStop and slR > 0 ? color.new(color.orange, 60) : isTrailStop and slR == 0 ? color.new(color.gray, 60) : color.new(color.red, 60)
+                    regLine(line.new(x1=array.get(tBarIdx, i), y1=ent, x2=bar_index, y2=closePx, color=pathCol, width=1, style=line.style_dashed))
+                // === ADD-ON TP FLAG: if this closing trade is an Add-on that just won TP,
+                // mark its parent Main so the 2nd-order rescue below won't arm on Main's later SL.
+                // Match parent by (tSesName, tIsBuy, tOrigEntry) — Add-on and its Main share all three.
+                if isAddon and closedWin and array.size(tEntry) > 0
+                    float thisOrigEnt = array.get(tOrigEntry, i)
+                    for k = 0 to array.size(tEntry) - 1
+                        if not array.get(tIs2nd, k) and not array.get(tIsRec, k) and not array.get(tIsAddon, k) and array.get(tSesName, k) == sNameT and array.get(tIsBuy, k) == isB and array.get(tOrigEntry, k) == thisOrigEnt
+                            array.set(tAddonTPd, k, true)
+                            break
+                // === 2ND ORDER PENDING: save for re-break ===
+                // Only arm 2nd if this is Main hitting SL AND its Add-on didn't already win with TP.
+                if use2ndOrder and not isRec and not is2nd and closedLoss and not isTrailStop and not array.get(tAddonTPd, i)
+                    float origEntForP2 = array.get(tOrigEntry, i)
+                    array.push(p2IsBuy, isB)
+                    array.push(p2Entry, ent)
+                    array.push(p2SesRange, sesRangeT)
+                    array.push(p2SesName, sNameT)
+                    array.push(p2OriginTime, time)
+                    array.push(p2IsSmall, smMode)
+                    array.push(p2OrigEntry, origEntForP2)
+                    // Show the pending 2nd order from the main SL: a dashed level line + label at the
+                    // re-break level (= main entry), plus dashed TP/SL preview lines at the projected
+                    // 2nd-order levels so the customer sees where TP/SL will sit before it fills.
+                    // All three lines track the bar and are cleared on trigger / session cancel.
+                    float p2PrevOneR       = oneRDistOf(sesRangeT)
+                    float p2PrevSL         = slEdgeMode ? (isB ? origEntForP2 - sesRangeT : origEntForP2 + sesRangeT) : (isB ? ent - p2PrevOneR : ent + p2PrevOneR)
+                    float p2PrevRR         = use2ndCustomRR ? secondRR : rrRatio
+                    float p2PrevRewardBase = rrBaseMode == "SL Distance" ? math.abs(ent - p2PrevSL) : p2PrevOneR
+                    float p2PrevTP         = isB ? ent + (p2PrevRewardBase * p2PrevRR) : ent - (p2PrevRewardBase * p2PrevRR)
+                    line  p2PLn   = line.new(x1=bar_index + 2, y1=ent,       x2=bar_index + 20, y2=ent,       color=color.new(color.yellow, 10), width=2, style=line.style_dashed)
+                    line  p2PTpLn = line.new(x1=bar_index + 2, y1=p2PrevTP,  x2=bar_index + 20, y2=p2PrevTP,  color=color.new(color.green,  10), width=2, style=line.style_dashed)
+                    line  p2PSlLn = line.new(x1=bar_index + 2, y1=p2PrevSL,  x2=bar_index + 20, y2=p2PrevSL,  color=color.new(color.red,    10), width=2, style=line.style_dashed)
+                    label p2PLb   = label.new(x=bar_index + 20, y=ent, text="ออเดอร์ที่ 3 รอ Re-break: " + str.tostring(ent, format.mintick), style=label.style_label_left, color=color.new(color.yellow, 60), textcolor=color.black, size=orderLabelSizeSm)
+                    label p2PTpLb = label.new(x=bar_index + 20, y=p2PrevTP, text="TP ออเดอร์ที่ 3 " + str.tostring(p2PrevTP, format.mintick), style=label.style_label_left, color=color.new(color.green, 60), textcolor=color.white, size=orderLabelSizeSm)
+                    label p2PSlLb = label.new(x=bar_index + 20, y=p2PrevSL, text="SL ออเดอร์ที่ 3 " + str.tostring(p2PrevSL, format.mintick), style=label.style_label_left, color=color.new(color.red,   60), textcolor=color.white, size=orderLabelSizeSm)
+                    array.push(p2PendLn, p2PLn)
+                    array.push(p2PendLb, p2PLb)
+                    array.push(p2PendTpLn, p2PTpLn)
+                    array.push(p2PendSlLn, p2PSlLn)
+                    array.push(p2PendTpLb, p2PTpLb)
+                    array.push(p2PendSlLb, p2PSlLb)
+                line finalTrLn = array.get(tTrailLn, i)
+                if not na(finalTrLn)
+                    line.delete(finalTrLn)
+                box finalSlBx = array.get(tSlBox, i)
+                if not na(finalSlBx)
+                    box.set_right(finalSlBx, bar_index)
+                // If the trade that just closed was the MAIN (not 2nd, not Add-on, not Reco), cancel
+                // any Add-on pending armed by it — otherwise the preview labels/lines linger until
+                // session end when price never returns to the 50% level again.
+                if useAddOn50 and not isRec and not is2nd and not isAddon and array.size(aoOriginTime) > 0
+                    int aox2 = array.size(aoOriginTime) - 1
+                    int mainOrigT = array.get(tOriginTime, i)
+                    while aox2 >= 0
+                        if array.get(aoOriginTime, aox2) == mainOrigT and array.get(aoSesName, aox2) == sNameT and array.get(aoIsBuy, aox2) == isB
+                            line.delete(array.get(aoLn, aox2))
+                            line.delete(array.get(aoTpLn, aox2))
+                            line.delete(array.get(aoSlLn, aox2))
+                            label.delete(array.get(aoLb, aox2))
+                            label.delete(array.get(aoTpLb, aox2))
+                            label.delete(array.get(aoSlLb, aox2))
+                            array.remove(aoIsBuy, aox2), array.remove(aoLevel, aox2), array.remove(aoTP, aox2)
+                            array.remove(aoSL, aox2), array.remove(aoSesRange, aox2), array.remove(aoSesName, aox2)
+                            array.remove(aoOriginTime, aox2), array.remove(aoIsSmall, aox2), array.remove(aoLn, aox2), array.remove(aoTpLn, aox2), array.remove(aoSlLn, aox2)
+                            array.remove(aoLb, aox2), array.remove(aoTpLb, aox2), array.remove(aoSlLb, aox2)
+                        aox2 -= 1
+                label.delete(array.get(tAoTpLbl, i)), label.delete(array.get(tAoSlLbl, i))
+                line.delete(array.get(tAoTpLn, i)),  line.delete(array.get(tAoSlLn, i))
+                array.remove(tIsBuy, i), array.remove(tEntry, i), array.remove(tSL, i), array.remove(tTP, i)
+                array.remove(tBarIdx, i), array.remove(tPipsDist, i), array.remove(tTradeRR, i), array.remove(tIsSmall, i), array.remove(tIsRec, i)
+                array.remove(tIs2nd, i), array.remove(tIsAddon, i), array.remove(tTrailed, i), array.remove(tSlR, i), array.remove(tSlBox, i), array.remove(tTrailLn, i), array.remove(tSesRange, i), array.remove(tSesName, i)
+                array.remove(tOriginTime, i), array.remove(tOrigEntry, i)
+                array.remove(tAoTpLbl, i), array.remove(tAoSlLbl, i), array.remove(tAoTpLn, i), array.remove(tAoSlLn, i), array.remove(tAddonTPd, i)
+// ==========================================
+
+// --- 7. CLEANUP & STATS TABLE ---
+
+// ==========================================
+
+int targetMonthNum = statTargetM == "January" ? 1 : statTargetM == "February" ? 2 : statTargetM == "March" ? 3 : statTargetM == "April" ? 4 : statTargetM == "May" ? 5 : statTargetM == "June" ? 6 : statTargetM == "July" ? 7 : statTargetM == "August" ? 8 : statTargetM == "September" ? 9 : statTargetM == "October" ? 10 : statTargetM == "November" ? 11 : 12
+
+int nDaysDraw   = math.min(statDays, array.size(dayList))
+
+int cutoffDraw  = 0
+
+if array.size(dayList) > 0
+    cutoffDraw := array.get(dayList, array.size(dayList) - nDaysDraw)
+// Anchor "current month" to the last bar on the chart (not wall-clock timenow),
+// so the latest data month is always included and counted as the newest month.
+int currentTotalM = year(time, tz) * 12 + month(time, tz)
+
+f_cleanupDrawings() =>
+    if array.size(regBoxes) > 0
+        for i = array.size(regBoxes) - 1 to 0
+            int bTime = array.get(regBoxTime, i)
+            int bDayId = (year(bTime, tz) * 10000) + (month(bTime, tz) * 100) + dayofmonth(bTime, tz)
+            bool keep = false
+            if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+                keep := bDayId >= cutoffDraw
+            else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+                keep := (year(bTime, tz) * 12 + month(bTime, tz)) >= (currentTotalM - statMonths + 1)
+            else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+                keep := month(bTime, tz) == targetMonthNum and year(bTime, tz) == actualTargetY
+            if not keep
+                box.delete(array.get(regBoxes, i))
+                array.remove(regBoxes, i), array.remove(regBoxTime, i)
+    if array.size(regLines) > 0
+        for i = array.size(regLines) - 1 to 0
+            int lTime = array.get(regLineTime, i)
+            int lDayId = (year(lTime, tz) * 10000) + (month(lTime, tz) * 100) + dayofmonth(lTime, tz)
+            bool keep = false
+            if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+                keep := lDayId >= cutoffDraw
+            else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+                keep := (year(lTime, tz) * 12 + month(lTime, tz)) >= (currentTotalM - statMonths + 1)
+            else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+                keep := month(lTime, tz) == targetMonthNum and year(lTime, tz) == actualTargetY
+            if not keep
+                line.delete(array.get(regLines, i))
+                array.remove(regLines, i), array.remove(regLineTime, i)
+    if array.size(regLabels) > 0
+        for i = array.size(regLabels) - 1 to 0
+            int lbTime = array.get(regLabelTime, i)
+            int lbDayId = (year(lbTime, tz) * 10000) + (month(lbTime, tz) * 100) + dayofmonth(lbTime, tz)
+            bool keep = false
+            if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+                keep := lbDayId >= cutoffDraw
+            else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+                keep := (year(lbTime, tz) * 12 + month(lbTime, tz)) >= (currentTotalM - statMonths + 1)
+            else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+                keep := month(lbTime, tz) == targetMonthNum and year(lbTime, tz) == actualTargetY
+            if not keep
+                label.delete(array.get(regLabels, i))
+                array.remove(regLabels, i), array.remove(regLabelTime, i)
+// ==========================================
+
+// --- LUXE TABLE THEME (โทนหรู: กระจกเข้ม + กรอบทอง + แถวสลับมีมิติ) ---
+
+// ==========================================
+
+color lxGold    = color.rgb(212, 175, 55)
+
+color lxTitleTx = color.rgb(236, 210, 140)
+
+color lxHeadBg  = color.new(color.rgb(26, 32, 52), 6)
+
+color lxSubBg   = color.new(color.rgb(19, 24, 40), 8)
+
+color lxColHd   = color.rgb(150, 160, 182)
+
+color lxRowA    = color.new(color.rgb(13, 17, 28), 14)
+
+color lxRowB    = color.new(color.rgb(22, 28, 46), 14)
+
+color lxRowDim  = color.new(color.rgb(13, 17, 28), 52)
+
+color lxText    = color.rgb(233, 236, 243)
+
+color lxMuted   = color.rgb(128, 138, 158)
+
+color lxDimTx   = color.rgb(90, 98, 116)
+
+color lxGreen   = color.rgb(64, 216, 158)
+
+color lxRed     = color.rgb(250, 118, 118)
+
+color lxAmber   = color.rgb(251, 191, 36)
+
+color lxCyan    = color.rgb(102, 208, 255)
+
+color lxFrame   = color.new(lxGold, 42)
+
+color lxGrid    = color.new(color.rgb(7, 10, 17), 35)
+
+color lxBestBg  = color.new(lxGold, 84)
+
+// แถบ winrate 10 ช่อง ▰▰▰▰▰▰▱▱▱▱
+
+f_wrBar(float pct) =>
+    string s = ""
+    int filled = na(pct) ? 0 : math.min(10, math.max(0, math.round(pct / 10)))
+    for _b = 1 to 10
+        s += _b <= filled ? "▰" : "▱"
+    s
+f_monthShort(int m) =>
+    switch m
+        1  => "Jan"
+        2  => "Feb"
+        3  => "Mar"
+        4  => "Apr"
+        5  => "May"
+        6  => "Jun"
+        7  => "Jul"
+        8  => "Aug"
+        9  => "Sep"
+        10 => "Oct"
+        11 => "Nov"
+        =>    "Dec"
+var table statsTable        = table.new(f_tablePos(mainTablePosStr),    2, 15,              bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+
+var table dailyStatsTable   = table.new(f_tablePos(dailyTablePosStr),   6, 34,              bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+
+var table monthlyStatsTable = table.new(f_tablePos(monthlyTablePosStr), 5, statMonths + 3,  bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+
+var table settingsTable     = table.new(f_tablePos(settingsTablePosStr),2, 30,              bgcolor=lxRowA, frame_width=2, frame_color=lxFrame, border_width=1, border_color=lxGrid)
+
+// Merge-once flags stored in an array so the table-drawing functions can mutate them
+// (Pine functions can mutate global arrays but cannot reassign global scalars)
+var bool[] lxMergedArr = array.new_bool(6, false)
+
+f_drawStats() =>
+    int   winCnt  = 0
+    int   lossCnt = 0
+    int   streak     = 0
+    int   maxW       = 0
+    int   maxL       = 0
+    int   curStreakStart = 0
+    int   maxWStart  = 0
+    int   maxWEnd    = 0
+    int   maxLStart  = 0
+    int   maxLEnd    = 0
+    float netR       = 0.0
+    float curWinSum  = 0.0
+    float curLossSum = 0.0
+    float maxWinR    = 0.0
+    float maxLossR   = 0.0
+    float curWinPips  = 0.0
+    float curLossPips = 0.0
+    float maxWinPips  = 0.0
+    float maxLossPips = 0.0
+    if array.size(resIsWin) > 0
+        for i = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, i)
+            int tDayId = (year(t, tz) * 10000) + (month(t, tz) * 100) + dayofmonth(t, tz)
+            bool valid = false
+            if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+                valid := tDayId >= cutoffDraw
+            else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+                valid := (year(t, tz) * 12 + month(t, tz)) >= (currentTotalM - statMonths + 1)
+            else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+                valid := month(t, tz) == targetMonthNum and year(t, tz) == actualTargetY
+            if valid
+                float tradeR = array.get(resTradeRR, i)
+                bool  isWin  = array.get(resIsWin, i)
+                float tPips  = array.get(resTpPts, i)
+                netR += tradeR
+                if streak == 0
+                    curStreakStart := t
+                if isWin
+                    winCnt += 1
+                    curWinSum  := streak >= 0 ? curWinSum + tradeR : tradeR
+                    curWinPips := streak >= 0 ? curWinPips + tPips : tPips
+                    if streak < 0
+                        curStreakStart := t
+                    streak     := streak >= 0 ? streak + 1 : 1
+                    if streak > maxW
+                        maxW      := streak
+                        maxWStart := curStreakStart
+                        maxWEnd   := t
+                    maxWinR    := math.max(maxWinR, curWinSum)
+                    maxWinPips := math.max(maxWinPips, curWinPips)
+                else
+                    lossCnt += 1
+                    curLossSum  := streak <= 0 ? curLossSum + tradeR : tradeR
+                    curLossPips := streak <= 0 ? curLossPips - tPips : -tPips
+                    if streak > 0
+                        curStreakStart := t
+                    streak      := streak <= 0 ? streak - 1 : -1
+                    if -streak > maxL
+                        maxL      := -streak
+                        maxLStart := curStreakStart
+                        maxLEnd   := t
+                    maxLossR    := math.min(maxLossR, curLossSum)
+                    maxLossPips := math.min(maxLossPips, curLossPips)
+    int   totalCnt  = winCnt + lossCnt
+    float wr        = totalCnt > 0 ? (winCnt / totalCnt) * 100 : na
+    color wrColor   = na(wr) ? lxMuted : wr >= 50 ? lxGreen : lxAmber
+    color netRColor = totalCnt == 0 ? lxMuted : netR > 0 ? lxGreen : netR < 0 ? lxRed : lxAmber
+    string netRStr  = totalCnt == 0 ? "-" : (netR > 0 ? "+" : "") + str.tostring(netR, "#.##") + "R"
+    string streakStr   = streak > 0 ? "W" + str.tostring(streak) : streak < 0 ? "L" + str.tostring(-streak) : "-"
+    color  streakColor = streak > 0 ? lxGreen : streak < 0 ? lxRed : lxMuted
+    string periodStr = ""
+    if statMode == "1. ย้อนหลังตามจำนวนวัน (Days)"
+        periodStr := "Last " + str.tostring(statDays) + " Days"
+    else if statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+        periodStr := "Last " + str.tostring(statMonths) + " Months"
+    else if statMode == "3. เจาะจงเดือนและปี (Specific Month)"
+        periodStr := statTargetM + " " + str.tostring(actualTargetY)
+    table.cell(statsTable, 0, 0,  "◆  PULLBACK PERFORMANCE", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(statsTable, 0, 1,  periodStr + "  ·  Base R:R 1:" + str.tostring(rrRatio, "#.#"), text_color=lxMuted, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(statsTable, 0, 2,  "Mode",       text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    string pbParamStr = str.tostring(pullbackRangePct, "#.#") + "% Rng"
+    string modeStr    = switch entryMode
+        "2. Pullback"              => "Pullback " + pbParamStr
+        "3. Pullback + Re-break"   => "PB+Rebreak " + pbParamStr
+        =>                            "Breakout"
+    table.cell(statsTable, 1, 2,  modeStr, text_color=lxCyan, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 3,  "Trail SL",   text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 3,  useTrail ? str.tostring(trailTriggerR, "#.#") + "R → " + str.tostring(trailLockR, "#.#") + "R" : "OFF", text_color=useTrail ? lxAmber : lxMuted, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 4,  "Trades",     text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 4,  totalCnt == 0 ? "-" : str.tostring(winCnt) + "W · " + str.tostring(lossCnt) + "L", text_color=lxText, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 5,  "Winrate",    text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 5,  na(wr) ? "-" : str.tostring(wr, "#.#") + "%\\n" + f_wrBar(wr), text_color=wrColor, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 6,  "Net R",      text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 6,  netRStr,      text_color=netRColor, text_size=size.normal, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 7,  "Max Streak",   text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 7,  "W" + str.tostring(maxW) + " · L" + str.tostring(maxL), text_color=lxAmber, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    string maxWDateStr = maxW > 0 ? str.tostring(dayofmonth(maxWStart, tz)) + " " + f_monthShort(month(maxWStart, tz)) + " – " + str.tostring(dayofmonth(maxWEnd, tz)) + " " + f_monthShort(month(maxWEnd, tz)) : "-"
+    string maxLDateStr = maxL > 0 ? str.tostring(dayofmonth(maxLStart, tz)) + " " + f_monthShort(month(maxLStart, tz)) + " – " + str.tostring(dayofmonth(maxLEnd, tz)) + " " + f_monthShort(month(maxLEnd, tz)) : "-"
+    table.cell(statsTable, 0, 8,  " W" + str.tostring(maxW) + " Date", text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 8,  maxWDateStr, text_color=maxW > 0 ? lxGreen : lxMuted, text_size=size.tiny, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 9,  " L" + str.tostring(maxL) + " Date", text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 9,  maxLDateStr, text_color=maxL > 0 ? lxRed : lxMuted, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 10, "Max Streak R", text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 10, totalCnt == 0 ? "-" : "+" + str.tostring(maxWinR, "#.##") + "R · " + str.tostring(maxLossR, "#.##") + "R", text_color=lxAmber, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 11, "Max Streak P", text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 11, totalCnt == 0 ? "-" : "+" + str.tostring(maxWinPips, "#.#") + "p · " + str.tostring(maxLossPips, "#.#") + "p", text_color=lxAmber, text_size=size.small, bgcolor=lxRowB, text_halign=text.align_right)
+    table.cell(statsTable, 0, 12, "Streak",       text_color=lxMuted, text_size=size.tiny,  bgcolor=lxRowA, text_halign=text.align_left)
+    table.cell(statsTable, 1, 12, streakStr,      text_color=streakColor, text_size=size.small, bgcolor=lxRowA, text_halign=text.align_right)
+    table.cell(statsTable, 0, 13, "Active",       text_color=lxDimTx, text_size=size.tiny,  bgcolor=lxRowB, text_halign=text.align_left)
+    table.cell(statsTable, 1, 13, str.tostring(array.size(tEntry)), text_color=lxAmber, text_size=size.tiny, bgcolor=lxRowB, text_halign=text.align_right)
+    if not array.get(lxMergedArr, 1)
+        array.set(lxMergedArr, 1, true)
+        table.merge_cells(statsTable, 0, 0, 1, 0)
+        table.merge_cells(statsTable, 0, 1, 1, 1)
+// ==========================================
+
+// --- ตารางที่ 3: DAILY WINRATE BY DATE (Specific Month) ---
+
+// ==========================================
+
+f_drawDaily() =>
+    int[]    ddWin      = array.new_int(32, 0)
+    int[]    ddLoss     = array.new_int(32, 0)
+    float[]  ddNetR     = array.new_float(32, 0.0)
+    float[]  ddWinPips  = array.new_float(32, 0.0)
+    float[]  ddLossPips = array.new_float(32, 0.0)
+    string[] ddTradeStr = array.new_string(32, "")
+    if array.size(resIsWin) > 0
+        for k = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, k)
+            if month(t, tz) == targetMonthNum and year(t, tz) == actualTargetY
+                int   d       = dayofmonth(t, tz)
+                bool  isWin   = array.get(resIsWin,   k)
+                float tradeR  = array.get(resTradeRR, k)
+                bool  isSm    = array.get(resIsSmall, k)
+                bool  isRec   = array.get(resIsRec,   k)
+                bool  is2nd   = array.get(resIs2nd,   k)
+                float tpPts   = array.get(resTpPts,   k)
+                if d >= 1 and d <= 31
+                    if isWin
+                        array.set(ddWin,  d, array.get(ddWin,  d) + 1)
+                        array.set(ddWinPips, d, array.get(ddWinPips, d) + tpPts)
+                    else
+                        array.set(ddLoss, d, array.get(ddLoss, d) + 1)
+                        array.set(ddLossPips, d, array.get(ddLossPips, d) + tpPts)
+                    array.set(ddNetR, d, array.get(ddNetR, d) + tradeR)
+                    string rangePfx  = isSm ? "Sm·" : ""
+                    string typeTag   = isRec ? "Reco" : is2nd ? "ออเดอร์ที่ 3" : "ออเดอร์ที่ 1"
+                    string rSign     = tradeR >= 0 ? "+" : ""
+                    string rStr      = rSign + str.tostring(tradeR, "#.##") + "R"
+                    string tradeLine = isSm ? rangePfx + typeTag + " " + str.tostring(tpPts, "#.#") + "p " + rStr + "\\n" : rangePfx + typeTag + " " + rStr + "\\n"
+                    array.set(ddTradeStr, d, array.get(ddTradeStr, d) + tradeLine)
+    table.cell(dailyStatsTable, 0, 0, "◆  DAILY LOG  ·  " + statTargetM + " " + str.tostring(actualTargetY), text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 0, 1, "DATE",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 1, 1, "W-L",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 2, 1, "WR%",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 3, 1, "NET R",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 4, 1, "PIPS",   text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(dailyStatsTable, 5, 1, "TRADES", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    int   totW = 0
+    int   totL = 0
+    float totR = 0.0
+    float totWinPips  = 0.0
+    float totLossPips = 0.0
+    for d = 1 to 31
+        int   dw   = array.get(ddWin,  d)
+        int   dl   = array.get(ddLoss, d)
+        float dnr  = array.get(ddNetR, d)
+        float dwp  = array.get(ddWinPips,  d)
+        float dlp  = array.get(ddLossPips, d)
+        int   dtot = dw + dl
+        float dwr  = dtot > 0 ? (dw / dtot) * 100.0 : na
+        color dwrC = na(dwr) ? lxDimTx : dwr >= 50.0 ? lxGreen : lxAmber
+        color dnrC = dtot == 0 ? lxDimTx : dnr > 0 ? lxGreen : dnr < 0 ? lxRed : lxAmber
+        string dwlS   = dtot == 0 ? "-" : str.tostring(dw) + "W · " + str.tostring(dl) + "L"
+        string dwrS   = na(dwr) ? "-" : str.tostring(dwr, "#.#") + "%"
+        string dnrS   = dtot == 0 ? "-" : (dnr >= 0 ? "+" : "") + str.tostring(dnr, "#.##") + "R"
+        string dpipS  = dtot == 0 ? "-" : "+" + str.tostring(dwp, "#.#") + " / -" + str.tostring(dlp, "#.#")
+        color  dpipC  = dtot == 0 ? lxDimTx : (dwp - dlp) > 0 ? lxGreen : (dwp - dlp) < 0 ? lxRed : lxAmber
+        string tradeS = array.get(ddTradeStr, d)
+        if str.length(tradeS) > 0
+            tradeS := str.substring(tradeS, 0, str.length(tradeS) - 1)
+        color dayBg  = dtot == 0 ? lxRowDim : d % 2 == 1 ? lxRowA : lxRowB
+        color dateC  = dtot == 0 ? lxDimTx : lxText
+        table.cell(dailyStatsTable, 0, d + 1, str.tostring(d), text_color=dateC, text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 1, d + 1, dwlS,   text_color=dateC, text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 2, d + 1, dwrS,   text_color=dwrC,  text_size=size.tiny, bgcolor=dayBg)
+        table.cell(dailyStatsTable, 3, d + 1, dnrS,   text_color=dnrC,  text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_right)
+        table.cell(dailyStatsTable, 4, d + 1, dpipS,  text_color=dpipC,  text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_right)
+        table.cell(dailyStatsTable, 5, d + 1, tradeS, text_color=color.new(lxText, 22), text_size=size.tiny, bgcolor=dayBg, text_halign=text.align_left)
+        totW += dw
+        totL += dl
+        totR += dnr
+        totWinPips  += dwp
+        totLossPips += dlp
+    int   totTot = totW + totL
+    float totWR  = totTot > 0 ? (totW / totTot) * 100.0 : na
+    color totWRC = na(totWR) ? lxDimTx : totWR >= 50 ? lxGreen : lxAmber
+    color totNRC = totTot == 0 ? lxDimTx : totR > 0 ? lxGreen : totR < 0 ? lxRed : lxAmber
+    string totWLS = totTot == 0 ? "-" : str.tostring(totW) + "W · " + str.tostring(totL) + "L"
+    string totWRS = na(totWR) ? "-" : str.tostring(totWR, "#.#") + "%"
+    string totNRS = totTot == 0 ? "-" : (totR >= 0 ? "+" : "") + str.tostring(totR, "#.##") + "R"
+    string totPipS = totTot == 0 ? "-" : "+" + str.tostring(totWinPips, "#.#") + " / -" + str.tostring(totLossPips, "#.#")
+    color  totPipC = totTot == 0 ? lxDimTx : (totWinPips - totLossPips) > 0 ? lxGreen : (totWinPips - totLossPips) < 0 ? lxRed : lxAmber
+    table.cell(dailyStatsTable, 0, 33, "TOTAL", text_color=lxTitleTx, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    table.cell(dailyStatsTable, 1, 33, totWLS,  text_color=lxText,    text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 2, 33, totWRS,  text_color=totWRC,    text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(dailyStatsTable, 3, 33, totNRS,  text_color=totNRC,    text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(dailyStatsTable, 4, 33, totPipS, text_color=totPipC,   text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(dailyStatsTable, 5, 33, na(totWR) ? "" : f_wrBar(totWR), text_color=totWRC, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    if not array.get(lxMergedArr, 3)
+        array.set(lxMergedArr, 3, true)
+        table.merge_cells(dailyStatsTable, 0, 0, 5, 0)
+// ==========================================
+
+// --- ตารางที่ 4: MONTHLY STATS (สรุปรายเดือน) ---
+
+// ==========================================
+
+f_drawMonthly() =>
+    int startTotalM = currentTotalM - statMonths + 1
+    int[] mWin    = array.new_int(statMonths, 0)
+    int[] mLoss   = array.new_int(statMonths, 0)
+    float[] mNetR = array.new_float(statMonths, 0.0)
+    int[] mMaxW   = array.new_int(statMonths, 0)
+    int[] mMaxL   = array.new_int(statMonths, 0)
+    int[] mStreak = array.new_int(statMonths, 0)
+    if array.size(resIsWin) > 0
+        for i = 0 to array.size(resIsWin) - 1
+            int t = array.get(resTime, i)
+            int tTotalM = year(t, tz) * 12 + month(t, tz)
+            int idx = tTotalM - startTotalM
+            if idx >= 0 and idx < statMonths
+                float tradeR = array.get(resTradeRR, i)
+                bool isWin = array.get(resIsWin, i)
+                int curStrk = array.get(mStreak, idx)
+                if isWin
+                    array.set(mWin, idx, array.get(mWin, idx) + 1)
+                    curStrk := curStrk >= 0 ? curStrk + 1 : 1
+                    array.set(mMaxW, idx, math.max(array.get(mMaxW, idx), curStrk))
+                else
+                    array.set(mLoss, idx, array.get(mLoss, idx) + 1)
+                    curStrk := curStrk <= 0 ? curStrk - 1 : -1
+                    array.set(mMaxL, idx, math.max(array.get(mMaxL, idx), -curStrk))
+                array.set(mStreak, idx, curStrk)
+                array.set(mNetR, idx, array.get(mNetR, idx) + tradeR)
+    table.cell(monthlyStatsTable, 0, 0, "◆  MONTHLY  ·  Last " + str.tostring(statMonths) + " Months", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 0, 1, "MONTH",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 1, 1, "W-L",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 2, 1, "WR%",    text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 3, 1, "NET R",  text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    table.cell(monthlyStatsTable, 4, 1, "STREAK", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    int bestMIdx = -1
+    float bestMNR = 0.0
+    for m = 0 to statMonths - 1
+        if (array.get(mWin, m) + array.get(mLoss, m)) > 0 and array.get(mNetR, m) > bestMNR
+            bestMNR := array.get(mNetR, m)
+            bestMIdx := m
+    int mSumW = 0
+    int mSumL = 0
+    float mSumR = 0.0
+    for m = 0 to statMonths - 1
+        int totalM = startTotalM + m
+        int mMon = (totalM - 1) % 12 + 1
+        int mYr  = math.round((totalM - mMon) / 12)
+        string mLabel = f_monthShort(mMon) + " " + str.tostring(mYr)
+        int mw = array.get(mWin, m)
+        int ml = array.get(mLoss, m)
+        float mnr = array.get(mNetR, m)
+        int mtot = mw + ml
+        float mwr = mtot > 0 ? (mw * 1.0 / mtot) * 100.0 : na
+        color mwrC = na(mwr) ? lxDimTx : mwr >= 50 ? lxGreen : lxAmber
+        color mnrC = mtot == 0 ? lxDimTx : mnr > 0 ? lxGreen : mnr < 0 ? lxRed : lxAmber
+        string mwlS = mtot == 0 ? "-" : str.tostring(mw) + "W · " + str.tostring(ml) + "L"
+        string mwrS = na(mwr) ? "-" : str.tostring(mwr, "#.#") + "%"
+        string mnrS = mtot == 0 ? "-" : (mnr >= 0 ? "+" : "") + str.tostring(mnr, "#.##") + "R"
+        bool isBestM = m == bestMIdx and mtot > 0
+        color mRowBg = isBestM ? lxBestBg : m % 2 == 0 ? lxRowA : lxRowB
+        color mLabelC = isBestM ? lxTitleTx : mtot == 0 ? lxDimTx : lxText
+        int mmxW = array.get(mMaxW, m)
+        int mmxL = array.get(mMaxL, m)
+        string mStrkS = mtot == 0 ? "-" : "W" + str.tostring(mmxW) + " · L" + str.tostring(mmxL)
+        table.cell(monthlyStatsTable, 0, m + 2, (isBestM ? "★ " : "") + mLabel, text_color=mLabelC, text_size=size.small, bgcolor=mRowBg, text_halign=text.align_left)
+        table.cell(monthlyStatsTable, 1, m + 2, mwlS, text_color=mtot == 0 ? lxDimTx : lxText, text_size=size.small, bgcolor=mRowBg)
+        table.cell(monthlyStatsTable, 2, m + 2, mwrS, text_color=mwrC, text_size=size.small, bgcolor=mRowBg)
+        table.cell(monthlyStatsTable, 3, m + 2, mnrS, text_color=mnrC, text_size=size.small, bgcolor=mRowBg, text_halign=text.align_right)
+        table.cell(monthlyStatsTable, 4, m + 2, mStrkS, text_color=mtot == 0 ? lxDimTx : lxAmber, text_size=size.small, bgcolor=mRowBg)
+        mSumW += mw
+        mSumL += ml
+        mSumR += mnr
+    int mSumTot = mSumW + mSumL
+    float mSumWR = mSumTot > 0 ? (mSumW * 1.0 / mSumTot) * 100.0 : na
+    color mSumWRC = na(mSumWR) ? lxDimTx : mSumWR >= 50 ? lxGreen : lxAmber
+    color mSumNRC = mSumTot == 0 ? lxDimTx : mSumR > 0 ? lxGreen : mSumR < 0 ? lxRed : lxAmber
+    string mSumWLS = mSumTot == 0 ? "-" : str.tostring(mSumW) + "W · " + str.tostring(mSumL) + "L"
+    string mSumWRS = na(mSumWR) ? "-" : str.tostring(mSumWR, "#.#") + "%"
+    string mSumNRS = mSumTot == 0 ? "-" : (mSumR >= 0 ? "+" : "") + str.tostring(mSumR, "#.##") + "R"
+    int totalRow = statMonths + 2
+    int allMaxW = 0
+    int allMaxL = 0
+    for sm = 0 to statMonths - 1
+        allMaxW := math.max(allMaxW, array.get(mMaxW, sm))
+        allMaxL := math.max(allMaxL, array.get(mMaxL, sm))
+    string allStrkS = mSumTot == 0 ? "-" : "W" + str.tostring(allMaxW) + " · L" + str.tostring(allMaxL)
+    table.cell(monthlyStatsTable, 0, totalRow, "TOTAL", text_color=lxTitleTx, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_left)
+    table.cell(monthlyStatsTable, 1, totalRow, mSumWLS, text_color=lxText, text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 2, totalRow, mSumWRS, text_color=mSumWRC, text_size=size.tiny, bgcolor=lxHeadBg)
+    table.cell(monthlyStatsTable, 3, totalRow, mSumNRS, text_color=mSumNRC, text_size=size.tiny, bgcolor=lxHeadBg, text_halign=text.align_right)
+    table.cell(monthlyStatsTable, 4, totalRow, allStrkS, text_color=mSumTot == 0 ? lxDimTx : lxAmber, text_size=size.tiny, bgcolor=lxHeadBg)
+    if not array.get(lxMergedArr, 4)
+        array.set(lxMergedArr, 4, true)
+        table.merge_cells(monthlyStatsTable, 0, 0, 4, 0)
+// ==========================================
+
+// --- ตารางที่ 5: SETTINGS SUMMARY (สรุปการตั้งค่าปัจจุบัน) ---
+
+// ==========================================
+
+f_drawSettings() =>
+    table.clear(settingsTable, 0, 0, 1, 29)
+    int rowIdx = 0
+    // --- Title ---
+    table.cell(settingsTable, 0, rowIdx, "◆  SETTINGS SUMMARY", text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    table.cell(settingsTable, 1, rowIdx, "",                    text_color=lxTitleTx, text_size=size.small, bgcolor=lxHeadBg)
+    rowIdx += 1
+    // --- Build value strings ---
+    string sMode = switch entryMode
+        "2. Pullback"                => "Pullback"
+        "3. Pullback + Re-break"     => "PB+Rebreak"
+        =>                              "Breakout"
+    string sPb = str.tostring(pullbackRangePct, "#.#") + "% Rng"
+    string sEnabled = ""
+    if useSyd
+        sEnabled := "Syd"
+    if useTok
+        sEnabled := str.length(sEnabled) > 0 ? sEnabled + ", Tok" : "Tok"
+    if useLon
+        sEnabled := str.length(sEnabled) > 0 ? sEnabled + ", Lon" : "Lon"
+    if useNy
+        sEnabled := str.length(sEnabled) > 0 ? sEnabled + ", NY"  : "NY"
+    if str.length(sEnabled) == 0
+        sEnabled := "None"
+    color rowBg = lxRowA
+    // === Entry section (always) ===
+    table.cell(settingsTable, 0, rowIdx, "─── Entry ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "",              text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Mode", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, sMode, text_color=lxCyan,   text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    if usePbLevel
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Pullback", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, sPb,        text_color=lxText,  text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if planExpireHours > 0
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Plan Expire", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, str.tostring(planExpireHours, "#.#") + "h", text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if not closeMainOnNewSes
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Close on NewSes", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, "OFF",              text_color=lxRed,   text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if use2ndOrder
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        string sndDisp = use2ndCustomRR ? "ON · " + str.tostring(secondRR, "#.#") + "R" : "ON"
+        table.cell(settingsTable, 0, rowIdx, "2nd Order", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, sndDisp,     text_color=lxGreen, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if useAddOn50
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        string aoTpDisp = aoTpMode == "R:R Ratio" ? str.tostring(aoRR, "#.#") + "R" : "Box"
+        table.cell(settingsTable, 0, rowIdx, "50% Add-on", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, "ON · TP " + aoTpDisp, text_color=lxGreen, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+        if aoMainBE
+            rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+            table.cell(settingsTable, 0, rowIdx, " └ Main → BE", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+            table.cell(settingsTable, 1, rowIdx, "ON",            text_color=lxGreen, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+            rowIdx += 1
+    // === Sessions section (always) ===
+    table.cell(settingsTable, 0, rowIdx, "─── Sessions ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "",                 text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Enabled", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, sEnabled,  text_color=lxText,  text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    // === Risk section (always) ===
+    table.cell(settingsTable, 0, rowIdx, "─── Risk ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "",             text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+    rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    string sOneRTxt = oneRBasis == "ATR" ? ("ATR " + str.tostring(oneRAtrMult, "#.#") + "x") : (oneRBasis == "Distance" ? ("Dist " + str.tostring(oneRDistFix, "#.###")) : (str.tostring(oneRPctVal, "#.#") + "% Sess"))
+    color  sOneRCol = oneRBasis == "ATR" ? color.new(color.purple, 0) : (oneRBasis == "Distance" ? lxAmber : lxText)
+    table.cell(settingsTable, 0, rowIdx, "1R Basis",    text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, sOneRTxt,      text_color=sOneRCol, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    if slEdgeMode
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "SL Place", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, "Edge",     text_color=lxGreen, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+    table.cell(settingsTable, 0, rowIdx, "Risk / R:R", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+    table.cell(settingsTable, 1, rowIdx, "$" + str.tostring(riskAmount, "#") + " · 1:" + str.tostring(rrRatio, "#.#"), text_color=lxText, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+    rowIdx += 1
+    if rrBaseMode == "SL Distance"
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "R:R Base", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, "SL Dist",  text_color=lxCyan,  text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    if spreadPts > 0
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Spread", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, str.tostring(spreadPts, "#.#####"), text_color=lxAmber, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    // === Add-ons section (if any) ===
+    if useTrail
+        table.cell(settingsTable, 0, rowIdx, "─── Add-ons ───", text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, "",                text_color=lxColHd, text_size=size.tiny, bgcolor=lxSubBg)
+        rowIdx += 1
+        rowBg := rowIdx % 2 == 1 ? lxRowA : lxRowB
+        table.cell(settingsTable, 0, rowIdx, "Trail SL", text_color=lxMuted, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_left)
+        table.cell(settingsTable, 1, rowIdx, str.tostring(trailTriggerR, "#.#") + "R→" + str.tostring(trailLockR, "#.#") + "R", text_color=lxAmber, text_size=size.tiny, bgcolor=rowBg, text_halign=text.align_right)
+        rowIdx += 1
+    // --- Merge title (once) ---
+    if not array.get(lxMergedArr, 5)
+        array.set(lxMergedArr, 5, true)
+        table.merge_cells(settingsTable, 0, 0, 1, 0)
+
+// ==========================================
+
+// --- 8. DRAW CALLS (stats/tables wrapped in functions to keep main body short) ---
+
+// ==========================================
+
+if limitDrawDays and barstate.islast
+    f_cleanupDrawings()
+
+if showStatsTable and barstate.islast
+    f_drawStats()
+
+if showDailyTable and barstate.islast
+    f_drawDaily()
+
+if showMonthlyTable and barstate.islast and statMode == "2. ย้อนหลังตามจำนวนเดือน (Months)"
+    f_drawMonthly()
+
+if showSettingsTable and barstate.islast
+    f_drawSettings()

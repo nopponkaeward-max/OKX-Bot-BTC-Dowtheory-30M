@@ -1,0 +1,96 @@
+strategy:
+  entry_mode: "Breakout"          # Breakout | Pullback | PBRebreak
+  pullback_range_pct: 20.0
+  plan_expire_hours: 0            # 0 = cancel at next session start
+
+  close_main_on_new_ses: true
+
+  # 2nd Order (re-break rescue)
+  use_2nd_order: true
+  use_2nd_custom_rr: false
+  second_rr: 5.0
+
+  # 50% Add-on
+  use_addon_50: true
+  addon_tp_mode: "RR"             # MainCost | RR
+  addon_rr: 5.0
+  addon_main_be: false
+  addon_keep_open: false
+
+  # Trade Days
+  trade_days:
+    sun: false
+    mon: true
+    tue: true
+    wed: true
+    thu: true
+    fri: true
+    sat: false
+
+  # Sessions
+  sessions:
+    - name: Sydney
+      enabled: true
+      time_str: "2000-0500"
+      dst_time_str: "2100-0600"
+    - name: Tokyo
+      enabled: false
+      time_str: "0000-0900"
+      dst_time_str: "0000-0900"
+    - name: London
+      enabled: false
+      time_str: "0800-1700"
+      dst_time_str: "0700-1600"
+    - name: NewYork
+      enabled: false
+      time_str: "1300-2200"
+      dst_time_str: "1200-2100"
+
+  gap_fallback: false
+  tz_offset_hours: 0
+
+  # Risk Management
+  one_r_basis: "SL%"              # SL% | Distance | ATR
+  one_r_pct_val: 55.0
+  one_r_dist_fix: 5.0
+  one_r_atr_period: 14
+  one_r_atr_mult: 1.5
+  sl_edge_mode: false
+  rr_ratio: 5.0
+  rr_base_mode: "SLDistance"      # 1RBasis | SLDistance
+  risk_amount: 500.0
+  pip_value_ratio: 100.0
+  spread_pts: 0.0
+
+  # Trailing SL
+  use_trail: false
+  trail_trigger_r: 2.0
+  trail_lock_r: 1.0
+
+sizing:
+  risk_usdt: 50.0
+  ct_val: 0.01          # BTC-USDT-SWAP contract value = 0.01 BTC
+  min_contracts: 1.0
+  lot_size: 1.0
+  tick_size: 0.1
+  max_contracts: 0
+  leverage: 5
+  td_mode: "cross"
+  pip_value_ratio: 100.0
+  use_pine_sizing: false
+
+exchange:
+  inst_id: "BTC-USDT-SWAP"
+  bar: "30m"
+  # api_key / api_secret / passphrase → from environment
+  demo: true
+  base_url: "https://www.okx.com"
+  hedge_mode: false
+
+runtime:
+  mode: "dry-run"
+  poll_seconds: 20
+  candle_history: 300
+  state_file: "state/bot_state.json"
+  log_file: "logs/bot.log"
+  log_level: "INFO"
