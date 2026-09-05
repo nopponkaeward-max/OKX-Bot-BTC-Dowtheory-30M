@@ -39,9 +39,9 @@ def overall(trades: List[ClosedTrade]) -> Dict:
             streak = streak - 1 if streak <= 0 else -1
             max_l = max(max_l, -streak)
 
-    main_trades = [t for t in trades if not t.is_2nd and not t.is_addon]
-    second_trades = [t for t in trades if t.is_2nd and not t.is_addon]
-    addon_trades = [t for t in trades if t.is_addon]
+    order1_trades = [t for t in trades if not t.is_order3 and not t.is_order2]
+    order2_trades = [t for t in trades if t.is_order2]
+    order3_trades = [t for t in trades if t.is_order3 and not t.is_order2]
     ses_close = [t for t in trades if t.close_reason == "session_close"]
 
     return {
@@ -53,9 +53,9 @@ def overall(trades: List[ClosedTrade]) -> Dict:
         "max_win_streak": max_w,
         "max_loss_streak": max_l,
         "current_streak": streak,
-        "main": len(main_trades),
-        "second": len(second_trades),
-        "addon": len(addon_trades),
+        "order1": len(order1_trades),
+        "order2": len(order2_trades),
+        "order3": len(order3_trades),
         "session_close": len(ses_close),
     }
 
@@ -116,7 +116,7 @@ def render(trades: List[ClosedTrade], tz_offset: int = 0,
     cs = o["current_streak"]
     cur = f"W{cs}" if cs > 0 else (f"L{-cs}" if cs < 0 else "-")
     lines.append(f"  Streak   : {cur}")
-    lines.append(f"  Order-1: {o['main']}  Order-2: {o['addon']}  Order-3: {o['second']}  SesClose: {o['session_close']}")
+    lines.append(f"  Order-1: {o['order1']}  Order-2: {o['order2']}  Order-3: {o['order3']}  SesClose: {o['session_close']}")
     lines.append("-" * 50)
     lines.append("  BY DAY        W-L        WR      NET R")
     for r in by_day(trades, tz_offset):

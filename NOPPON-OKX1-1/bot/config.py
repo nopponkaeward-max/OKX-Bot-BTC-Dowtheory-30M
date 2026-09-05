@@ -33,17 +33,17 @@ class StrategyConfig:
 
     close_main_on_new_ses: bool = True
 
-    # --- 2nd Order ---
-    use_2nd_order: bool = True
-    use_2nd_custom_rr: bool = False
-    second_rr: float = 5.0
+    # --- Order-2 (50% pullback) ---
+    use_order2: bool = True
+    order2_tp_mode: str = "RR"     # "MainCost" | "RR"
+    order2_rr: float = 5.0
+    order2_main_be: bool = False
+    order2_keep_open: bool = False
 
-    # --- 50% Add-on ---
-    use_addon_50: bool = True
-    addon_tp_mode: str = "RR"      # "MainCost" | "RR"
-    addon_rr: float = 5.0
-    addon_main_be: bool = False
-    addon_keep_open: bool = False
+    # --- Order-3 (re-break rescue) ---
+    use_order3: bool = True
+    use_order3_custom_rr: bool = False
+    order3_rr: float = 5.0
 
     # --- Trade Days ---
     trade_days: Dict[str, bool] = field(default_factory=lambda: {

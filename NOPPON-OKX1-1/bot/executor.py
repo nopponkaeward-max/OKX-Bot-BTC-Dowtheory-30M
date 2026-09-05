@@ -2,7 +2,7 @@
 
 Design
 ------
-* FILL / FILL_2ND / FILL_ADDON events: place limit entry with attached TP/SL.
+* FILL / FILL_ORDER3 / FILL_ORDER2 events: place limit entry with attached TP/SL.
 * CANCEL events: cancel resting orders (OCO partner, expired plan).
 * CLOSE_SESSION events: close position at market.
 * Fills are detected by polling order status; TP/SL are managed by OKX's
@@ -118,7 +118,7 @@ class Executor:
             etype = ev["type"]
             if not act:
                 continue
-            if etype in ("FILL", "FILL_2ND", "FILL_ADDON"):
+            if etype in ("FILL", "FILL_ORDER3", "FILL_ORDER2"):
                 self._place_entry(ev)
             elif etype == "CANCEL":
                 self._cancel_by_event(ev)
@@ -164,7 +164,7 @@ class Executor:
         if self.cfg.exchange.hedge_mode:
             order["posSide"] = "long" if ev["is_buy"] else "short"
 
-        _labels = {"FILL": "Order-1", "FILL_2ND": "Order-3", "FILL_ADDON": "Order-2"}
+        _labels = {"FILL": "Order-1", "FILL_ORDER3": "Order-3", "FILL_ORDER2": "Order-2"}
         label = _labels.get(ev["type"], ev["type"])
         try:
             res = self.client.place_order(order)

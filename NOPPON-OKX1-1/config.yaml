@@ -5,17 +5,17 @@ strategy:
 
   close_main_on_new_ses: true
 
-  # 2nd Order (re-break rescue)
-  use_2nd_order: true
-  use_2nd_custom_rr: false
-  second_rr: 5.0
+  # Order-2 (50% pullback)
+  use_order2: true
+  order2_tp_mode: "RR"            # MainCost | RR
+  order2_rr: 5.0
+  order2_main_be: false
+  order2_keep_open: false
 
-  # 50% Add-on
-  use_addon_50: true
-  addon_tp_mode: "RR"             # MainCost | RR
-  addon_rr: 5.0
-  addon_main_be: false
-  addon_keep_open: false
+  # Order-3 (re-break rescue)
+  use_order3: true
+  use_order3_custom_rr: false
+  order3_rr: 5.0
 
   # Trade Days
   trade_days:

@@ -17,7 +17,7 @@ def run_backtest(cfg: Config, candles: List[Candle],
     if verbose:
         for t in eng.closed:
             side = "BUY " if t.is_buy else "SELL"
-            tag = "Order-3" if t.is_2nd and not t.is_addon else ("Order-2" if t.is_addon else "Order-1")
+            tag = "Order-3" if t.is_order3 and not t.is_order2 else ("Order-2" if t.is_order2 else "Order-1")
             res = "WIN " if t.is_win else "LOSS"
             reas = f" [{t.close_reason}]" if t.close_reason != "tp_sl" else ""
             print(f"{tag} {side} {res} R={t.r:+.2f} "

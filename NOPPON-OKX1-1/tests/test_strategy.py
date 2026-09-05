@@ -295,13 +295,13 @@ class TestTPSL:
         assert closed[0]["is_win"] is False
 
 
-# ---- 2nd order rescue -----------------------------------------------
+# ---- Order-3 rescue -------------------------------------------------
 
-class TestSecondOrder:
-    def test_2nd_order_on_sl(self):
+class TestOrder3:
+    def test_order3_on_sl(self):
         cfg = _cfg(entry_mode="Breakout", one_r_basis="SL%",
                    one_r_pct_val=50.0, rr_ratio=2.0,
-                   use_2nd_order=True, use_addon_50=False)
+                   use_order3=True, use_order2=False)
         eng = StrategyEngine(cfg)
 
         for h in range(20, 24):
@@ -318,29 +318,29 @@ class TestSecondOrder:
         assert len(eng.trades) == 1
 
         t = eng.trades[0]
-        # SL hit → arms 2nd pending
+        # SL hit → arms Order-3 pending
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=0),
                            t.entry, t.entry, t.sl - 1, t.sl))
         assert len(eng.trades) == 0
-        assert len(eng.second_pending) == 1
+        assert len(eng.order3_pending) == 1
 
-        # Re-break → 2nd order fills
-        sp = eng.second_pending[0]
+        # Re-break → Order-3 fills
+        sp = eng.order3_pending[0]
         events = eng.on_bar(_candle(_ts(day=7, hour=6, minute=30),
                                      sp.entry, sp.entry + 5, sp.entry - 1,
                                      sp.entry + 3))
-        fills_2nd = [e for e in events if e["type"] == "FILL_2ND"]
+        fills_2nd = [e for e in events if e["type"] == "FILL_ORDER3"]
         assert len(fills_2nd) == 1
 
 
-# ---- add-on 50% ----------------------------------------------------
+# ---- Order-2 pullback -----------------------------------------------
 
-class TestAddon:
-    def test_addon_trigger(self):
+class TestOrder2:
+    def test_order2_trigger(self):
         cfg = _cfg(entry_mode="Breakout", one_r_basis="SL%",
                    one_r_pct_val=30.0, rr_ratio=2.0,
-                   use_addon_50=True, addon_tp_mode="RR", addon_rr=3.0,
-                   use_2nd_order=False, sl_edge_mode=True)
+                   use_order2=True, order2_tp_mode="RR", order2_rr=3.0,
+                   use_order3=False, sl_edge_mode=True)
         eng = StrategyEngine(cfg)
 
         # Session: hi=110, lo=90, range=20
@@ -357,27 +357,27 @@ class TestAddon:
         # ao_mid = 110 - 20/2 = 100 → ent(110) > ao_mid(100) and sl(90) <= ao_mid(100) → valid
         eng.on_bar(_candle(_ts(day=7, hour=5, minute=30), 100, 115, 100, 112))
         assert len(eng.trades) == 1
-        assert len(eng.addon_pending) == 1
+        assert len(eng.order2_pending) == 1
 
         # 50% level = 100, candle hits it but stays above SL (104)
-        ap = eng.addon_pending[0]
+        ap = eng.order2_pending[0]
         assert ap.level == pytest.approx(100.0)
         events = eng.on_bar(_candle(_ts(day=7, hour=6, minute=0),
                                      105, 105, 99, 104.5))
-        addon_fills = [e for e in events if e["type"] == "FILL_ADDON"]
-        assert len(addon_fills) == 1
+        order2_fills = [e for e in events if e["type"] == "FILL_ORDER2"]
+        assert len(order2_fills) == 1
         assert len(eng.trades) == 2
 
 
 # ---- Order-3 deferred (waits for both Order-1 + Order-2 SL) ----------
 
 class TestOrder3Deferred:
-    def test_order3_waits_for_addon_sl(self):
+    def test_order3_waits_for_order2_sl(self):
         """Order-3 must NOT arm until both Order-1 and Order-2 hit SL."""
         cfg = _cfg(entry_mode="Breakout", one_r_basis="Distance",
                    one_r_dist_fix=5.0, rr_ratio=2.0,
-                   use_2nd_order=True, use_addon_50=True,
-                   addon_tp_mode="RR", addon_rr=2.0,
+                   use_order3=True, use_order2=True,
+                   order2_tp_mode="RR", order2_rr=2.0,
                    sl_edge_mode=True)
         eng = StrategyEngine(cfg)
 
@@ -395,20 +395,20 @@ class TestOrder3Deferred:
         # Buy breakout → Order-1 entry=110 sl_edge=90
         eng.on_bar(_candle(_ts(day=7, hour=5, minute=30), 100, 115, 100, 112))
         assert len(eng.trades) == 1
-        assert len(eng.addon_pending) == 1
+        assert len(eng.order2_pending) == 1
 
         # Addon triggers at 50% = 100
-        # addon entry=100, sl=90 (same edge), addon risk=10
+        # Order-2 entry=100, sl=90 (same edge), risk=10
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=0), 105, 105, 99, 104))
         assert len(eng.trades) == 2
 
-        t1 = [t for t in eng.trades if not t.is_addon][0]
-        t2 = [t for t in eng.trades if t.is_addon][0]
+        t1 = [t for t in eng.trades if not t.is_order2][0]
+        t2 = [t for t in eng.trades if t.is_order2][0]
         # Main SL=90, Addon SL=90 — both same. We need them different.
-        # Force addon SL higher so it survives when main SLs
+        # Force Order-2 SL lower so it survives when Order-1 SLs
         t2.sl = 93.0
 
-        # Price drops to 89 — only Order-1 SL (90) hit, addon SL (93) also hit
+        # Price drops to 89 — only Order-1 SL (90) hit, Order-2 SL (93) also hit
         # Need to hit Order-1 SL but NOT Order-2 SL
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=30),
                            100, 100, 89, 91))
@@ -420,8 +420,8 @@ class TestOrder3Deferred:
         # -- fresh approach: use different SL values --
         cfg2 = _cfg(entry_mode="Breakout", one_r_basis="Distance",
                     one_r_dist_fix=5.0, rr_ratio=4.0,
-                    use_2nd_order=True, use_addon_50=True,
-                    addon_tp_mode="RR", addon_rr=2.0,
+                    use_order3=True, use_order2=True,
+                    order2_tp_mode="RR", order2_rr=2.0,
                     sl_edge_mode=True)
         eng2 = StrategyEngine(cfg2)
 
@@ -435,36 +435,36 @@ class TestOrder3Deferred:
                                     100, 100, 100, 100))
         eng2.on_bar(_candle(_ts(day=7, hour=5, minute=0), 100, 100, 100, 100))
         eng2.on_bar(_candle(_ts(day=7, hour=5, minute=30), 100, 115, 100, 112))
-        assert len(eng2.addon_pending) == 1
+        assert len(eng2.order2_pending) == 1
         eng2.on_bar(_candle(_ts(day=7, hour=6, minute=0), 105, 105, 99, 104))
         assert len(eng2.trades) == 2
 
-        # Manually set different SL for addon so we can SL them separately
-        main_t = [t for t in eng2.trades if not t.is_addon][0]
-        addon_t = [t for t in eng2.trades if t.is_addon][0]
-        main_t.sl = 95.0    # main SL higher
-        addon_t.sl = 85.0   # addon SL lower
+        # Manually set different SL for Order-2 so we can SL them separately
+        main_t = [t for t in eng2.trades if not t.is_order2][0]
+        order2_t = [t for t in eng2.trades if t.is_order2][0]
+        main_t.sl = 95.0    # Order-1 SL higher
+        order2_t.sl = 85.0  # Order-2 SL lower
 
-        # Bar hits main SL (95) but NOT addon SL (85)
+        # Bar hits Order-1 SL (95) but NOT Order-2 SL (85)
         eng2.on_bar(_candle(_ts(day=7, hour=6, minute=30),
                             100, 100, 94, 96))
-        assert len(eng2.second_pending) == 0  # NOT armed
-        assert len(eng2.deferred_2nd) == 1    # deferred
+        assert len(eng2.order3_pending) == 0  # NOT armed
+        assert len(eng2.deferred_order3) == 1    # deferred
 
-        # Bar hits addon SL (85)
-        addon_t2 = eng2.trades[0]
-        assert addon_t2.is_addon
+        # Bar hits Order-2 SL (85)
+        order2_t2 = eng2.trades[0]
+        assert order2_t2.is_order2
         eng2.on_bar(_candle(_ts(day=7, hour=7, minute=0),
                             90, 90, 84, 86))
         assert len(eng2.trades) == 0
-        assert len(eng2.deferred_2nd) == 0
-        assert len(eng2.second_pending) == 1  # Order-3 armed!
+        assert len(eng2.deferred_order3) == 0
+        assert len(eng2.order3_pending) == 1  # Order-3 armed!
 
-    def test_order3_arms_immediately_when_addon_disabled(self):
-        """When use_addon_50=False, Order-3 arms right after Order-1 SL."""
+    def test_order3_arms_immediately_when_order2_disabled(self):
+        """When use_order2=False, Order-3 arms right after Order-1 SL."""
         cfg = _cfg(entry_mode="Breakout", one_r_basis="Distance",
                    one_r_dist_fix=5.0, rr_ratio=4.0,
-                   use_2nd_order=True, use_addon_50=False,
+                   use_order3=True, use_order2=False,
                    sl_edge_mode=True)
         eng = StrategyEngine(cfg)
 
@@ -481,7 +481,7 @@ class TestOrder3Deferred:
         # Buy breakout → Order-1
         eng.on_bar(_candle(_ts(day=7, hour=5, minute=30), 100, 115, 100, 112))
         assert len(eng.trades) == 1
-        assert len(eng.addon_pending) == 0  # addon disabled
+        assert len(eng.order2_pending) == 0  # Order-2 disabled
 
         main_t = eng.trades[0]
         main_t.sl = 95.0
@@ -490,15 +490,15 @@ class TestOrder3Deferred:
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=0),
                            100, 100, 94, 96))
         assert len(eng.trades) == 0
-        assert len(eng.deferred_2nd) == 0   # no deferral
-        assert len(eng.second_pending) == 1  # armed immediately
+        assert len(eng.deferred_order3) == 0   # no deferral
+        assert len(eng.order3_pending) == 1  # armed immediately
 
-    def test_order3_cancelled_if_addon_tp(self):
+    def test_order3_cancelled_if_order2_tp(self):
         """If Order-2 wins TP, deferred Order-3 is cancelled."""
         cfg = _cfg(entry_mode="Breakout", one_r_basis="Distance",
                    one_r_dist_fix=5.0, rr_ratio=4.0,
-                   use_2nd_order=True, use_addon_50=True,
-                   addon_tp_mode="RR", addon_rr=2.0,
+                   use_order3=True, use_order2=True,
+                   order2_tp_mode="RR", order2_rr=2.0,
                    sl_edge_mode=True)
         eng = StrategyEngine(cfg)
 
@@ -515,24 +515,24 @@ class TestOrder3Deferred:
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=0), 105, 105, 99, 104))
         assert len(eng.trades) == 2
 
-        # Set different SLs so main can SL without addon
-        main_t = [t for t in eng.trades if not t.is_addon][0]
-        addon_t = [t for t in eng.trades if t.is_addon][0]
+        # Set different SLs so Order-1 can SL without Order-2
+        main_t = [t for t in eng.trades if not t.is_order2][0]
+        order2_t = [t for t in eng.trades if t.is_order2][0]
         main_t.sl = 95.0
-        addon_t.sl = 85.0
+        order2_t.sl = 85.0
 
         # Order-1 SL → deferred
         eng.on_bar(_candle(_ts(day=7, hour=6, minute=30),
                            100, 100, 94, 96))
-        assert len(eng.deferred_2nd) == 1
+        assert len(eng.deferred_order3) == 1
 
         # Order-2 hits TP → deferred cancelled
         t2 = eng.trades[0]
-        assert t2.is_addon
+        assert t2.is_order2
         eng.on_bar(_candle(_ts(day=7, hour=7, minute=0),
                            t2.entry, t2.tp + 1, t2.entry, t2.tp))
-        assert len(eng.deferred_2nd) == 0
-        assert len(eng.second_pending) == 0  # NOT armed
+        assert len(eng.deferred_order3) == 0
+        assert len(eng.order3_pending) == 0  # NOT armed
 
 
 # ---- trailing SL ----------------------------------------------------
@@ -542,7 +542,7 @@ class TestTrailing:
         cfg = _cfg(entry_mode="Breakout", one_r_basis="SL%",
                    one_r_pct_val=50.0, rr_ratio=5.0,
                    use_trail=True, trail_trigger_r=2.0, trail_lock_r=1.0,
-                   use_addon_50=False, use_2nd_order=False)
+                   use_order2=False, use_order3=False)
         eng = StrategyEngine(cfg)
 
         for h in range(20, 24):
@@ -574,7 +574,7 @@ class TestTrailing:
 class TestCloseOnNewSession:
     def test_close(self):
         cfg = _cfg(entry_mode="Breakout", close_main_on_new_ses=True,
-                   use_addon_50=False, use_2nd_order=False)
+                   use_order2=False, use_order3=False)
         eng = StrategyEngine(cfg)
 
         # Session 1
