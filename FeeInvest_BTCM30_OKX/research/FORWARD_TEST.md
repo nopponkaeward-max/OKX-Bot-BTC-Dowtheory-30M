@@ -84,3 +84,12 @@ the historical cache rather than only the last 299 bars.
 - Price ~79,764 (flat vs check #8's 79,875).
 - Open trades to resolve: none. New signals: **none**.
 - Running tally: 0W / 0L. Dry spell ~10 days — still within normal range.
+
+## Check #10 — 2026-09-06 14:4x UTC
+
+- Data: last 299 confirmed 30m bars (2026-08-31 → 2026-09-06), OKX API.
+- Price ~79,633 (down slightly from check #9's 79,764).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~11 days — still within normal
+  variance for a ~3 signals/month strategy (expected average gap ~10 days;
+  longer gaps are common).
