@@ -93,3 +93,12 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. Dry spell ~11 days — still within normal
   variance for a ~3 signals/month strategy (expected average gap ~10 days;
   longer gaps are common).
+
+## Check #11 — 2026-09-06 21:0x UTC
+
+- Data: last 299 confirmed 30m bars (2026-08-31 → 2026-09-06), OKX API.
+- Price ~79,876 (up from check #10's 79,633).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~12 days — still within normal
+  variance; BTC ranging 79k-80k with low volatility, which suppresses
+  the 3×ATR climax condition.
