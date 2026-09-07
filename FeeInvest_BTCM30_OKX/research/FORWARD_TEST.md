@@ -102,3 +102,11 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. Dry spell ~12 days — still within normal
   variance; BTC ranging 79k-80k with low volatility, which suppresses
   the 3×ATR climax condition.
+
+## Check #12 — 2026-09-07 03:1x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-01 → 2026-09-07), OKX API.
+- Price ~79,840 (flat vs check #11's 79,876).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~12 days — BTC continues ranging
+  79k-80k; no 3×ATR climax bars in this low-volatility environment.
