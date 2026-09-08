@@ -155,3 +155,13 @@ the historical cache rather than only the last 299 bars.
   78k-79k; moves remain gradual across multiple bars rather than producing
   single 3×ATR climax candles. No intervention warranted; strategy
   parameters are locked.
+
+## Check #18 — 2026-09-08 16:1x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-02 → 2026-09-08), OKX API.
+- Price ~78,866 (up from check #17's 78,437; BTC bounced off 77k support).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~15 days — despite a drop to ~76.2k
+  and recovery to ~78.9k, moves continue to spread across multiple bars
+  rather than producing single 3×ATR climax candles. Strategy parameters
+  are locked; no intervention warranted.
