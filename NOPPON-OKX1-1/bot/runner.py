@@ -53,8 +53,6 @@ class Runner:
             Executor(cfg, self.client) if self.live else None)
         self.last_ts: int = 0
         self._load_state()
-        if self.executor:
-            self.executor.cleanup_exchange()
 
     def _load_state(self):
         path = self.cfg.runtime.state_file

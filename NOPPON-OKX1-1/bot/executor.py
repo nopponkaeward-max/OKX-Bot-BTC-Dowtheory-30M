@@ -114,6 +114,9 @@ class Executor:
 
     # ------------------------------------------------------------------
     def handle_events(self, events: List[Dict], act: bool):
+        has_session_close = any(e["type"] == "CLOSE_SESSION" for e in events)
+        if act and has_session_close:
+            self._cleanup_session()
         for ev in events:
             etype = ev["type"]
             if not act:
@@ -235,29 +238,30 @@ class Executor:
             log.warning("close_position failed: %s", e)
 
     # ------------------------------------------------------------------
-    def cleanup_exchange(self):
-        """Cancel ALL pending orders, algo orders, and close ALL open
-        positions on the exchange for this instrument.  Called on bot
-        startup so no stale state survives a restart."""
+    def _cleanup_session(self):
+        """Cancel pending orders and algo orders (TP/SL) on the exchange.
+
+        Called when a new trading session starts — NOT on bot restart,
+        so orders survive network disconnects and bot restarts.
+        Positions are closed individually by CLOSE_SESSION events.
+        """
         inst = self.cfg.exchange.inst_id
         cleaned = 0
 
-        # 1. Cancel all pending (unfilled) orders
         try:
             pending = self.client.get_pending_orders(inst)
             for o in pending:
                 try:
                     self.client.cancel_order(inst, ord_id=o.get("ordId"))
                     cleaned += 1
-                    log.info("STARTUP cleanup: cancelled pending order %s",
+                    log.info("SESSION cleanup: cancelled pending order %s",
                              o.get("ordId"))
                 except OKXError as e:
-                    log.warning("STARTUP cleanup: cancel order %s failed: %s",
+                    log.warning("SESSION cleanup: cancel order %s failed: %s",
                                 o.get("ordId"), e)
         except OKXError as e:
-            log.warning("STARTUP cleanup: get_pending_orders failed: %s", e)
+            log.warning("SESSION cleanup: get_pending_orders failed: %s", e)
 
-        # 2. Cancel all algo orders (TP/SL/OCO)
         for algo_type in ("oco", "conditional"):
             try:
                 algos = self.client.get_algo_orders(inst, ord_type=algo_type)
@@ -265,40 +269,23 @@ class Executor:
                     try:
                         self.client.cancel_algo_order(inst, a.get("algoId"))
                         cleaned += 1
-                        log.info("STARTUP cleanup: cancelled algo order %s (%s)",
+                        log.info("SESSION cleanup: cancelled algo order %s (%s)",
                                  a.get("algoId"), algo_type)
                     except OKXError as e:
-                        log.warning("STARTUP cleanup: cancel algo %s failed: %s",
+                        log.warning("SESSION cleanup: cancel algo %s failed: %s",
                                     a.get("algoId"), e)
             except OKXError as e:
-                log.warning("STARTUP cleanup: get_algo_orders(%s) failed: %s",
+                log.warning("SESSION cleanup: get_algo_orders(%s) failed: %s",
                             algo_type, e)
 
-        # 3. Close all open positions
-        try:
-            positions = self.client.get_positions(inst)
-            for pos in positions:
-                amt = float(pos.get("pos", "0"))
-                if amt == 0:
-                    continue
-                pos_side = pos.get("posSide", "")
-                mgn = pos.get("mgnMode", self.cfg.sizing.td_mode)
-                try:
-                    self.client.close_position(inst, mgn_mode=mgn,
-                                               pos_side=pos_side)
-                    cleaned += 1
-                    log.info("STARTUP cleanup: closed position %s amt=%s",
-                             pos_side or "net", amt)
-                except OKXError as e:
-                    log.warning("STARTUP cleanup: close position %s failed: %s",
-                                pos_side or "net", e)
-        except OKXError as e:
-            log.warning("STARTUP cleanup: get_positions failed: %s", e)
+        for rec in list(self.orders.values()):
+            if rec.status in ("placed", "filled"):
+                rec.status = "cancelled"
 
         if cleaned:
-            log.info("STARTUP cleanup done: %d items cleared on exchange", cleaned)
+            log.info("SESSION cleanup done: %d items cleared on exchange", cleaned)
         else:
-            log.info("STARTUP cleanup: exchange is clean, nothing to clear")
+            log.info("SESSION cleanup: no pending/algo orders to clear")
 
     # ------------------------------------------------------------------
     def poll_fills(self):
