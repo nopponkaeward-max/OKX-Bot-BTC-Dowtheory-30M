@@ -193,3 +193,15 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. Dry spell ~17 days — BTC bounced from ~78.4k
   to ~79k but moves remain gradual across multiple bars. No single bar
   met the 3×ATR climax + %K threshold. Strategy parameters are locked.
+
+## Check #22 — 2026-09-09 16:5x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-03 → 2026-09-09), OKX API.
+- Price ~78,609 (down from check #21's 79,052; BTC sold off through 79k).
+- Notable: bar at 15:00 UTC had a 1,348-pt range (79,376→78,028) but the
+  scanner confirms it did not meet both 3×ATR and %K<5/%K>95 simultaneously.
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~17 days — BTC trending lower from
+  ~81k to ~78.6k over the past few days; large intraday moves are occurring
+  but spread across multiple bars or not meeting both filter conditions.
+  Strategy parameters are locked.
