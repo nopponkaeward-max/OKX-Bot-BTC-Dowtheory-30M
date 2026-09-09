@@ -220,17 +220,85 @@ class Executor:
                         rec.cl_ord_id, e)
 
     def _close_position(self, ev: Dict):
-        side = "sell" if ev["is_buy"] else "buy"
         try:
+            pos_side = ""
+            if self.cfg.exchange.hedge_mode:
+                pos_side = "long" if ev["is_buy"] else "short"
             self.client.close_position(
                 self.cfg.exchange.inst_id,
-                mgnMode=self.cfg.sizing.td_mode,
-                posSide="long" if ev["is_buy"] else "short" if self.cfg.exchange.hedge_mode else "")
+                mgn_mode=self.cfg.sizing.td_mode,
+                pos_side=pos_side)
             log.info("CLOSED position %s @%.1f R=%+.2f",
                      "BUY" if ev["is_buy"] else "SELL",
                      ev.get("close_px", 0), ev.get("r", 0))
         except OKXError as e:
             log.warning("close_position failed: %s", e)
+
+    # ------------------------------------------------------------------
+    def cleanup_exchange(self):
+        """Cancel ALL pending orders, algo orders, and close ALL open
+        positions on the exchange for this instrument.  Called on bot
+        startup so no stale state survives a restart."""
+        inst = self.cfg.exchange.inst_id
+        cleaned = 0
+
+        # 1. Cancel all pending (unfilled) orders
+        try:
+            pending = self.client.get_pending_orders(inst)
+            for o in pending:
+                try:
+                    self.client.cancel_order(inst, ord_id=o.get("ordId"))
+                    cleaned += 1
+                    log.info("STARTUP cleanup: cancelled pending order %s",
+                             o.get("ordId"))
+                except OKXError as e:
+                    log.warning("STARTUP cleanup: cancel order %s failed: %s",
+                                o.get("ordId"), e)
+        except OKXError as e:
+            log.warning("STARTUP cleanup: get_pending_orders failed: %s", e)
+
+        # 2. Cancel all algo orders (TP/SL/OCO)
+        for algo_type in ("oco", "conditional"):
+            try:
+                algos = self.client.get_algo_orders(inst, ord_type=algo_type)
+                for a in algos:
+                    try:
+                        self.client.cancel_algo_order(inst, a.get("algoId"))
+                        cleaned += 1
+                        log.info("STARTUP cleanup: cancelled algo order %s (%s)",
+                                 a.get("algoId"), algo_type)
+                    except OKXError as e:
+                        log.warning("STARTUP cleanup: cancel algo %s failed: %s",
+                                    a.get("algoId"), e)
+            except OKXError as e:
+                log.warning("STARTUP cleanup: get_algo_orders(%s) failed: %s",
+                            algo_type, e)
+
+        # 3. Close all open positions
+        try:
+            positions = self.client.get_positions(inst)
+            for pos in positions:
+                amt = float(pos.get("pos", "0"))
+                if amt == 0:
+                    continue
+                pos_side = pos.get("posSide", "")
+                mgn = pos.get("mgnMode", self.cfg.sizing.td_mode)
+                try:
+                    self.client.close_position(inst, mgn_mode=mgn,
+                                               pos_side=pos_side)
+                    cleaned += 1
+                    log.info("STARTUP cleanup: closed position %s amt=%s",
+                             pos_side or "net", amt)
+                except OKXError as e:
+                    log.warning("STARTUP cleanup: close position %s failed: %s",
+                                pos_side or "net", e)
+        except OKXError as e:
+            log.warning("STARTUP cleanup: get_positions failed: %s", e)
+
+        if cleaned:
+            log.info("STARTUP cleanup done: %d items cleared on exchange", cleaned)
+        else:
+            log.info("STARTUP cleanup: exchange is clean, nothing to clear")
 
     # ------------------------------------------------------------------
     def poll_fills(self):

@@ -66,7 +66,7 @@ class OKXClient:
         return headers
 
     def _request(self, method: str, path: str, params: Optional[dict] = None,
-                 body: Optional[dict] = None, private: bool = False,
+                 body: Optional[Any] = None, private: bool = False,
                  retries: int = 3) -> List[dict]:
         query = ""
         if params:
@@ -166,3 +166,23 @@ class OKXClient:
     def get_positions(self, inst_id: str) -> List[dict]:
         return self._request("GET", "/api/v5/account/positions",
                              params={"instId": inst_id}, private=True)
+
+    def close_position(self, inst_id: str, mgn_mode: str = "cross",
+                       pos_side: str = "") -> dict:
+        body: Dict[str, str] = {"instId": inst_id, "mgnMode": mgn_mode}
+        if pos_side:
+            body["posSide"] = pos_side
+        data = self._request("POST", "/api/v5/trade/close-position",
+                             body=body, private=True)
+        return data[0] if data else {}
+
+    def get_algo_orders(self, inst_id: str, ord_type: str = "oco") -> List[dict]:
+        return self._request("GET", "/api/v5/trade/orders-algo-pending",
+                             params={"instId": inst_id, "ordType": ord_type},
+                             private=True)
+
+    def cancel_algo_order(self, inst_id: str, algo_id: str) -> dict:
+        body = [{"instId": inst_id, "algoId": algo_id}]
+        data = self._request("POST", "/api/v5/trade/cancel-algos",
+                             body=body, private=True)
+        return data[0] if data else {}
