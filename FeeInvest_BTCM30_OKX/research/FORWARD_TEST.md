@@ -205,3 +205,13 @@ the historical cache rather than only the last 299 bars.
   ~81k to ~78.6k over the past few days; large intraday moves are occurring
   but spread across multiple bars or not meeting both filter conditions.
   Strategy parameters are locked.
+
+## Check #23 — 2026-09-09 23:0x UTC
+
+- Data: last 285 confirmed 30m bars (2026-09-04 → 2026-09-09), OKX API.
+- Price ~77,887 (down sharply from check #22's 78,609; BTC broke below 78k).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~18 days — BTC continuing to sell off
+  from ~81k to ~77.9k over the past few days; moves remain spread across
+  multiple bars rather than producing single 3×ATR climax candles. Strategy
+  parameters are locked.
