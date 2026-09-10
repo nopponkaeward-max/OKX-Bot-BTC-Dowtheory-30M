@@ -244,3 +244,12 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. Dry spell ~19 days — BTC accelerating lower
   from ~78k to ~77.3k; volatility increasing but still not producing
   single bars meeting both filter conditions. Strategy parameters are locked.
+
+## Check #27 — 2026-09-10 23:4x UTC
+
+- Data: last 247 confirmed 30m bars (2026-09-05 → 2026-09-10), OKX API.
+- Price ~76,698 (down sharply from check #26's 77,300; BTC broke below 77k).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: 0W / 0L. Dry spell ~19 days — BTC continuing to sell off
+  from ~77.3k to ~76.7k; moves remain spread across multiple bars rather
+  than producing single 3×ATR climax candles. Strategy parameters are locked.
