@@ -271,3 +271,21 @@ the historical cache rather than only the last 299 bars.
 - Running tally: 0W / 0L. Dry spell ~20 days — BTC consolidating around
   76.8k-77.3k; no single bar met the 3×ATR climax + %K threshold. Strategy
   parameters are locked.
+
+## Check #30 — 2026-09-11 18:1x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-05 → 2026-09-11), OKX API.
+- Price ~77,500 (up from check #29's 77,000; BTC volatile with massive
+  intraday swings).
+- **FIRST SIGNAL! SHORT at 2026-09-11 13:30 UTC bar:**
+  - Signal bar: O=77,484.9 H=79,316.6 L=77,220.0 C=79,202.9
+  - Green bar, %K(14)=96.7 (>95), range=2,096.6 > 3×ATR(14)=1,620.0
+  - Entry: SHORT at next bar open = 79,203.0 (14:00 UTC bar)
+  - TP/SL = max(2.3% × 79,203, 500) = 1,821.7 pts
+  - TP = 77,381.3, SL = 81,024.7
+  - **TP HIT at 15:30 UTC bar** (low=77,252.1 ≤ 77,381.3) → **WIN**
+  - Trade duration: 3 bars (1.5 hours)
+- Running tally: **1W / 0L** (100% win rate, +1,821.7 pts). Dry spell
+  broken after 20 days — a violent BTC spike from ~77k to ~79.3k in a
+  single 30m bar triggered the exhaustion fade, which then reversed
+  ~1,950 pts within 2 hours. Textbook climax exhaustion.
