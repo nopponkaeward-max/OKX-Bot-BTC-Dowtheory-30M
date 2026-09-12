@@ -298,3 +298,10 @@ the historical cache rather than only the last 299 bars.
 - Open trades to resolve: none (check #30's SHORT already resolved as WIN).
 - New signals: **none** (only the already-resolved 13:30 signal in window).
 - Running tally: **1W / 0L** (+1,821.7 pts).
+
+## Check #32 — 2026-09-12 06:3x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-06 → 2026-09-12), OKX API.
+- Price ~77,214 (down from check #31's 77,236; BTC flat around 77k).
+- Open trades to resolve: none. New signals: **none**.
+- Running tally: **1W / 0L** (+1,821.7 pts).
