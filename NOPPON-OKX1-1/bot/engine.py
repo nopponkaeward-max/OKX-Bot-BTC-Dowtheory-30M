@@ -3,10 +3,9 @@
 State machine:
   1. Track session windows (Sydney/Tokyo/London/NY) per bar.
   2. On session end → create OCO plan pair (Buy Stop + Sell Stop).
-  3. Plans go through entry modes (Breakout / Pullback / PB+Re-break).
-  4. Triggered plan → open trade, cancel OCO partner.
-  5. Open trades check TP/SL, trailing SL, Order-3 rescue, Order-2 pullback.
-  6. Close-on-new-session closes open Order-1 orders when a new session starts.
+  3. Breakout trigger → open trade (Order-1), cancel OCO partner.
+  4. Open trades check TP/SL, trailing SL, Order-3 rescue.
+  5. Close-on-new-session closes open orders when a new session starts.
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Tuple
 
 from .config import Config, SessionDef, StrategyConfig
-from .indicators import atr_series
 
 
 @dataclass
@@ -41,7 +39,7 @@ class Plan:
     lot: float
     trade_rr: float
     ses_range: float
-    state: int = 0      # 0=waiting breakout, 1=waiting pullback, 2=waiting re-break
+    state: int = 0      # 0=waiting breakout
     create_ts: int = 0
     plan_id: int = 0    # unique auto-increment
 
@@ -55,7 +53,6 @@ class OpenTrade:
     bar_idx: int
     pips_dist: float    # 1R distance
     trade_rr: float
-    is_order2: bool = False
     is_order3: bool = False
     trailed: bool = False
     sl_r: float = -1.0
@@ -63,7 +60,6 @@ class OpenTrade:
     ses_name: str = ""
     origin_ts: int = 0
     orig_entry: float = 0.0
-    order2_tpd: bool = False
     trade_id: int = 0
 
 
@@ -78,17 +74,6 @@ class Order3Pending:
 
 
 @dataclass
-class Order2Pending:
-    is_buy: bool
-    level: float       # 50% trigger price
-    tp: float          # Order-1 entry
-    sl: float          # Order-1 SL
-    ses_range: float
-    ses_name: str
-    origin_ts: int     # Order-1's bar timestamp (link key)
-
-
-@dataclass
 class ClosedTrade:
     is_buy: bool
     entry: float
@@ -97,22 +82,10 @@ class ClosedTrade:
     is_win: bool
     r: float
     close_pts: float
-    is_order2: bool
     is_order3: bool
     origin_ts: int
     close_ts: int
     close_reason: str = "tp_sl"  # "tp_sl" | "session_close"
-
-
-@dataclass
-class DeferredOrder3:
-    """Stored when Order-1 hits SL but Order-2 is still open.
-    Order-3 arms only after Order-2 also hits SL."""
-    is_buy: bool
-    entry: float
-    ses_range: float
-    ses_name: str
-    orig_entry: float
 
 
 @dataclass
@@ -166,14 +139,8 @@ def _day_of_week(ts_ms: int, tz_offset: int = 0) -> int:
     return dt_local.weekday()
 
 
-def one_r_dist_of(cfg: StrategyConfig, ses_range: float,
-                  atr_val: float = 0.0) -> float:
-    if cfg.one_r_basis == "Distance":
-        return cfg.one_r_dist_fix
-    elif cfg.one_r_basis == "ATR":
-        return atr_val * cfg.one_r_atr_mult
-    else:
-        return ses_range * (cfg.one_r_pct_val / 100.0)
+def one_r_dist_of(cfg: StrategyConfig, ses_range: float) -> float:
+    return ses_range * (cfg.one_r_pct_val / 100.0)
 
 
 class StrategyEngine:
@@ -190,21 +157,12 @@ class StrategyEngine:
         self.plans: List[Plan] = []
         self.trades: List[OpenTrade] = []
         self.order3_pending: List[Order3Pending] = []
-        self.order2_pending: List[Order2Pending] = []
-        self.deferred_order3: List[DeferredOrder3] = []
         self.closed: List[ClosedTrade] = []
 
         self._oco_counter = 0
         self._plan_counter = 0
         self._trade_counter = 0
         self._bar_idx = -1
-
-        self._highs: List[float] = []
-        self._lows: List[float] = []
-        self._closes: List[float] = []
-
-        self._use_pullback = self.s.entry_mode in ("Pullback", "PBRebreak")
-        self._use_pb_rebreak = self.s.entry_mode == "PBRebreak"
 
     # ------------------------------------------------------------------
     @property
@@ -217,14 +175,6 @@ class StrategyEngine:
         if bar.endswith("D") or bar.endswith("d"):
             return 1440
         return 30
-
-    def _get_atr(self) -> float:
-        if len(self._closes) < self.s.one_r_atr_period:
-            return 0.0
-        vals = atr_series(self._highs, self._lows, self._closes,
-                          self.s.one_r_atr_period)
-        v = vals[-1]
-        return v if not math.isnan(v) else 0.0
 
     def _next_plan_id(self) -> int:
         self._plan_counter += 1
@@ -244,13 +194,9 @@ class StrategyEngine:
     def on_bar(self, candle: Candle) -> List[Dict]:
         """Process one closed bar, return events for executor."""
         self._bar_idx += 1
-        self._highs.append(candle.h)
-        self._lows.append(candle.l)
-        self._closes.append(candle.c)
 
         events: List[Dict] = []
 
-        atr_val = self._get_atr() if self.s.one_r_basis == "ATR" else 0.0
         tz_off = self.s.tz_offset_hours
         bar_len = self._bar_len_min
 
@@ -282,22 +228,19 @@ class StrategyEngine:
                 ses_range = srt.hi - srt.lo
                 if ses_range > 0:
                     events.extend(self._on_session_end(
-                        srt, candle, ses_range, atr_val))
+                        srt, candle, ses_range))
 
         # --- 2. Plan expiry ---
         if self.s.plan_expire_hours > 0:
             events.extend(self._check_plan_expiry(candle))
 
         # --- 3. Plan trigger check ---
-        events.extend(self._check_plans(candle, atr_val))
+        events.extend(self._check_plans(candle))
 
         # --- 4. Order-3 re-break check ---
-        events.extend(self._check_order3_pending(candle, atr_val))
+        events.extend(self._check_order3_pending(candle))
 
-        # --- 5. Order-2 pullback check ---
-        events.extend(self._check_order2_pending(candle, atr_val))
-
-        # --- 6. Trade TP/SL + trailing ---
+        # --- 5. Trade TP/SL + trailing ---
         events.extend(self._check_trades(candle))
 
         return events
@@ -318,46 +261,37 @@ class StrategyEngine:
                                    "oco_id": p.oco_id, "entry": p.entry})
                 i -= 1
 
-        # Cancel Order-3 pending + deferred
+        # Cancel Order-3 pending
         if self.s.use_order3:
             self.order3_pending = [
                 sp for sp in self.order3_pending if sp.ses_name != name]
-            self.deferred_order3 = [
-                d for d in self.deferred_order3 if d.ses_name != name]
-
-        # Cancel Order-2 pending
-        if self.s.use_order2:
-            self.order2_pending = [
-                ap for ap in self.order2_pending if ap.ses_name != name]
 
         # Close main orders on new session
         if self.s.close_main_on_new_ses:
             i = len(self.trades) - 1
             while i >= 0:
                 t = self.trades[i]
-                keep_order2 = self.s.order2_keep_open and t.is_order2
-                if not keep_order2:
-                    pnl_dist = (candle.c - t.entry) if t.is_buy else (t.entry - candle.c)
-                    actual_r = pnl_dist / t.pips_dist if t.pips_dist > 0 else 0.0
-                    ct = ClosedTrade(
-                        is_buy=t.is_buy, entry=t.entry, sl=t.sl, tp=t.tp,
-                        is_win=actual_r > 0, r=actual_r,
-                        close_pts=abs(pnl_dist), is_order3=t.is_order3,
-                        is_order2=t.is_order2, origin_ts=t.origin_ts,
-                        close_ts=candle.ts, close_reason="session_close")
-                    self.closed.append(ct)
-                    events.append({"type": "CLOSE_SESSION",
-                                   "trade_id": t.trade_id, "is_buy": t.is_buy,
-                                   "entry": t.entry, "close_px": candle.c,
-                                   "r": actual_r})
-                    self.trades.pop(i)
+                pnl_dist = (candle.c - t.entry) if t.is_buy else (t.entry - candle.c)
+                actual_r = pnl_dist / t.pips_dist if t.pips_dist > 0 else 0.0
+                ct = ClosedTrade(
+                    is_buy=t.is_buy, entry=t.entry, sl=t.sl, tp=t.tp,
+                    is_win=actual_r > 0, r=actual_r,
+                    close_pts=abs(pnl_dist), is_order3=t.is_order3,
+                    origin_ts=t.origin_ts,
+                    close_ts=candle.ts, close_reason="session_close")
+                self.closed.append(ct)
+                events.append({"type": "CLOSE_SESSION",
+                               "trade_id": t.trade_id, "is_buy": t.is_buy,
+                               "entry": t.entry, "close_px": candle.c,
+                               "r": actual_r})
+                self.trades.pop(i)
                 i -= 1
 
         return events
 
     # ------------------------------------------------------------------
     def _on_session_end(self, srt: SessionRuntime, candle: Candle,
-                        ses_range: float, atr_val: float) -> List[Dict]:
+                        ses_range: float) -> List[Dict]:
         events: List[Dict] = []
 
         # Trade day filter
@@ -369,12 +303,12 @@ class StrategyEngine:
         self._oco_counter += 1
         oco_id = self._oco_counter
 
-        one_r = one_r_dist_of(self.s, ses_range, atr_val)
+        one_r = one_r_dist_of(self.s, ses_range)
 
         # --- BUY PLAN ---
         b_entry = srt.hi
         b_ent_adj = b_entry + self.s.spread_pts
-        b_sl = srt.lo if self.s.sl_edge_mode else b_ent_adj - one_r
+        b_sl = b_ent_adj - one_r
         b_risk = abs(b_ent_adj - b_sl)
         b_reward_base = b_risk if self.s.rr_base_mode == "SLDistance" else one_r
         b_tp = b_ent_adj + b_reward_base * self.s.rr_ratio
@@ -391,7 +325,7 @@ class StrategyEngine:
         # --- SELL PLAN ---
         s_entry = srt.lo
         s_ent_adj = s_entry - self.s.spread_pts
-        s_sl = srt.hi if self.s.sl_edge_mode else s_ent_adj + one_r
+        s_sl = s_ent_adj + one_r
         s_risk = abs(s_sl - s_ent_adj)
         s_reward_base = s_risk if self.s.rr_base_mode == "SLDistance" else one_r
         s_tp = s_ent_adj - s_reward_base * self.s.rr_ratio
@@ -442,9 +376,8 @@ class StrategyEngine:
         return events
 
     # ------------------------------------------------------------------
-    def _check_plans(self, candle: Candle, atr_val: float) -> List[Dict]:
+    def _check_plans(self, candle: Candle) -> List[Dict]:
         events: List[Dict] = []
-        pb_pct = self.s.pullback_range_pct / 100.0
 
         i = len(self.plans) - 1
         while i >= 0:
@@ -454,40 +387,17 @@ class StrategyEngine:
             p = self.plans[i]
             ent = p.entry
             is_b = p.is_buy
-            state = p.state
-            ses_range = p.ses_range
-            pb_dist = ses_range * pb_pct
-            pb_price = (ent - pb_dist) if is_b else (ent + pb_dist)
 
-            triggered = False
-
-            if self._use_pullback:
-                if state == 0:
-                    if (is_b and candle.h > ent) or (not is_b and candle.l < ent):
-                        p.state = 1
-                elif state == 1:
-                    if (is_b and candle.l <= pb_price) or (not is_b and candle.h >= pb_price):
-                        if self._use_pb_rebreak:
-                            p.state = 2
-                        else:
-                            triggered = True
-                            ent = pb_price
-                elif state == 2:
-                    if (is_b and candle.h > ent) or (not is_b and candle.l < ent):
-                        triggered = True
-            else:
-                if (is_b and candle.h > ent) or (not is_b and candle.l < ent):
-                    triggered = True
+            triggered = (is_b and candle.h > ent) or (not is_b and candle.l < ent)
 
             if triggered:
-                events.extend(self._trigger_plan(i, ent, candle, atr_val))
+                events.extend(self._trigger_plan(i, ent, candle))
             else:
                 i -= 1
 
         return events
 
-    def _trigger_plan(self, idx: int, ent: float, candle: Candle,
-                      atr_val: float) -> List[Dict]:
+    def _trigger_plan(self, idx: int, ent: float, candle: Candle) -> List[Dict]:
         events: List[Dict] = []
         p = self.plans[idx]
         is_b = p.is_buy
@@ -497,29 +407,18 @@ class StrategyEngine:
 
         ent += self.s.spread_pts if is_b else -self.s.spread_pts
 
-        one_r = one_r_dist_of(self.s, ses_range, atr_val)
-
-        if self.s.sl_edge_mode:
-            sl = (orig_entry - ses_range) if is_b else (orig_entry + ses_range)
-        else:
-            sl = (ent - one_r) if is_b else (ent + one_r)
+        one_r = one_r_dist_of(self.s, ses_range)
+        sl = (ent - one_r) if is_b else (ent + one_r)
 
         tp = p.tp
         lot = p.lot
         trade_rr = p.trade_rr
         r_dist = one_r
-        dist = abs(ent - sl)
-
-        if self._use_pullback:
-            reward_base = dist if self.s.rr_base_mode == "SLDistance" else r_dist
-            tp = (ent + reward_base * self.s.rr_ratio) if is_b else (ent - reward_base * self.s.rr_ratio)
-            lot = self.s.risk_amount / (r_dist * self.s.pip_value_ratio) if r_dist > 0 else 0.0
-            trade_rr = abs(ent - tp) / r_dist if r_dist > 0 else 0.0
 
         trade = OpenTrade(
             is_buy=is_b, entry=ent, sl=sl, tp=tp,
             bar_idx=self._bar_idx, pips_dist=r_dist, trade_rr=trade_rr,
-            is_order2=False, is_order3=False,
+            is_order3=False,
             ses_range=ses_range, ses_name=p.session_name,
             origin_ts=candle.ts, orig_entry=orig_entry,
             trade_id=self._next_trade_id())
@@ -529,16 +428,6 @@ class StrategyEngine:
                        "is_buy": is_b, "entry": ent, "sl": sl, "tp": tp,
                        "one_r": r_dist, "lot": lot, "trr": trade_rr,
                        "session": p.session_name})
-
-        # Arm Order-2 (50% pullback)
-        if self.s.use_order2:
-            ao_mid = (orig_entry - ses_range / 2) if is_b else (orig_entry + ses_range / 2)
-            ao_valid = (ent > ao_mid and sl <= ao_mid) if is_b else (ent < ao_mid and sl >= ao_mid)
-            if ao_valid:
-                self.order2_pending.append(Order2Pending(
-                    is_buy=is_b, level=ao_mid, tp=ent, sl=sl,
-                    ses_range=ses_range, ses_name=p.session_name,
-                    origin_ts=candle.ts))
 
         # Remove triggered plan
         self.plans.pop(idx)
@@ -558,7 +447,7 @@ class StrategyEngine:
         return events
 
     # ------------------------------------------------------------------
-    def _check_order3_pending(self, candle: Candle, atr_val: float) -> List[Dict]:
+    def _check_order3_pending(self, candle: Candle) -> List[Dict]:
         if not self.s.use_order3:
             return []
         events: List[Dict] = []
@@ -568,11 +457,8 @@ class StrategyEngine:
             triggered = (candle.h >= sp.entry) if sp.is_buy else (candle.l <= sp.entry)
             if triggered:
                 ent = sp.entry + (self.s.spread_pts if sp.is_buy else -self.s.spread_pts)
-                one_r = one_r_dist_of(self.s, sp.ses_range, atr_val)
-                if self.s.sl_edge_mode:
-                    sl = (sp.orig_entry - sp.ses_range) if sp.is_buy else (sp.orig_entry + sp.ses_range)
-                else:
-                    sl = (ent - one_r) if sp.is_buy else (ent + one_r)
+                one_r = one_r_dist_of(self.s, sp.ses_range)
+                sl = (ent - one_r) if sp.is_buy else (ent + one_r)
                 risk_d = abs(ent - sl)
                 rr = self.s.order3_rr if self.s.use_order3_custom_rr else self.s.rr_ratio
                 reward_base = risk_d if self.s.rr_base_mode == "SLDistance" else one_r
@@ -583,7 +469,7 @@ class StrategyEngine:
                 trade = OpenTrade(
                     is_buy=sp.is_buy, entry=ent, sl=sl, tp=tp,
                     bar_idx=self._bar_idx, pips_dist=one_r, trade_rr=trd_rr,
-                    is_order2=False, is_order3=True,
+                    is_order3=True,
                     ses_range=sp.ses_range, ses_name=sp.ses_name,
                     origin_ts=candle.ts, orig_entry=sp.orig_entry,
                     trade_id=self._next_trade_id())
@@ -593,65 +479,6 @@ class StrategyEngine:
                                "tp": tp, "one_r": one_r, "lot": lot,
                                "trr": trd_rr})
                 self.order3_pending.pop(i)
-            i -= 1
-        return events
-
-    # ------------------------------------------------------------------
-    def _check_order2_pending(self, candle: Candle, atr_val: float) -> List[Dict]:
-        if not self.s.use_order2:
-            return []
-        events: List[Dict] = []
-        i = len(self.order2_pending) - 1
-        while i >= 0:
-            ap = self.order2_pending[i]
-            hit = (candle.ts > ap.origin_ts and
-                   ((ap.is_buy and candle.l <= ap.level) or
-                    (not ap.is_buy and candle.h >= ap.level)))
-            if hit:
-                order1_alive = False
-                for t in self.trades:
-                    if (not t.is_order3 and not t.is_order2 and
-                            t.is_buy == ap.is_buy and
-                            t.origin_ts == ap.origin_ts and
-                            t.ses_name == ap.ses_name):
-                        order1_alive = True
-                        break
-                if order1_alive:
-                    a_entry = ap.level + (self.s.spread_pts if ap.is_buy else -self.s.spread_pts)
-                    a_sl = ap.sl
-                    a_risk_d = abs(a_entry - a_sl)
-                    if self.s.order2_tp_mode == "RR":
-                        a_tp = (a_entry + a_risk_d * self.s.order2_rr) if ap.is_buy else (a_entry - a_risk_d * self.s.order2_rr)
-                    else:
-                        a_tp = ap.tp
-                    a_lot = self.s.risk_amount / (a_risk_d * self.s.pip_value_ratio) if a_risk_d > 0 else 0.0
-                    a_rr = abs(a_tp - a_entry) / a_risk_d if a_risk_d > 0 else 0.0
-
-                    trade = OpenTrade(
-                        is_buy=ap.is_buy, entry=a_entry, sl=a_sl, tp=a_tp,
-                        bar_idx=self._bar_idx, pips_dist=a_risk_d,
-                        trade_rr=a_rr, is_order2=True, is_order3=False,
-                        ses_range=ap.ses_range, ses_name=ap.ses_name,
-                        origin_ts=candle.ts, orig_entry=ap.tp,
-                        trade_id=self._next_trade_id())
-                    self.trades.append(trade)
-                    events.append({"type": "FILL_ORDER2", "trade_id": trade.trade_id,
-                                   "is_buy": ap.is_buy, "entry": a_entry,
-                                   "sl": a_sl, "tp": a_tp, "lot": a_lot,
-                                   "trr": a_rr})
-
-                    # Move Order-1 TP to break-even if enabled
-                    if self.s.order2_main_be:
-                        for t in self.trades:
-                            if (not t.is_order3 and not t.is_order2 and
-                                    t.is_buy == ap.is_buy and
-                                    t.origin_ts == ap.origin_ts and
-                                    t.ses_name == ap.ses_name):
-                                t.tp = t.entry
-                                t.trade_rr = 0.0
-                                break
-
-                self.order2_pending.pop(i)
             i -= 1
         return events
 
@@ -701,7 +528,7 @@ class StrategyEngine:
                 ct = ClosedTrade(
                     is_buy=t.is_buy, entry=t.entry, sl=t.sl, tp=t.tp,
                     is_win=actual_r > 0, r=actual_r, close_pts=close_pts,
-                    is_order3=t.is_order3, is_order2=t.is_order2,
+                    is_order3=t.is_order3,
                     origin_ts=t.origin_ts, close_ts=candle.ts)
                 self.closed.append(ct)
 
@@ -710,62 +537,13 @@ class StrategyEngine:
                                "r": actual_r, "entry": t.entry,
                                "close_px": t.tp if closed_win else t.sl})
 
-                # Order-2 TP flag: mark parent Order-1 + cancel deferred Order-3
-                if t.is_order2 and closed_win:
-                    for mt in self.trades:
-                        if (not mt.is_order3 and not mt.is_order2 and
-                                mt.ses_name == t.ses_name and
-                                mt.is_buy == t.is_buy and
-                                mt.orig_entry == t.orig_entry):
-                            mt.order2_tpd = True
-                            break
-                    self.deferred_order3 = [
-                        d for d in self.deferred_order3
-                        if not (d.is_buy == t.is_buy and
-                                d.ses_name == t.ses_name and
-                                d.orig_entry == t.orig_entry)]
-
-                # Order-3 arming: requires both Order-1 AND Order-2 to SL
-                if (self.s.use_order3 and not t.is_order3 and not t.is_order2 and
-                        closed_loss and not is_trail_stop and not t.order2_tpd):
-                    order2_open = any(
-                        at for at in self.trades
-                        if at.is_order2 and at.ses_name == t.ses_name and
-                        at.is_buy == t.is_buy and at.orig_entry == t.orig_entry)
-                    if order2_open:
-                        self.deferred_order3.append(DeferredOrder3(
-                            is_buy=t.is_buy, entry=t.entry,
-                            ses_range=t.ses_range, ses_name=t.ses_name,
-                            orig_entry=t.orig_entry))
-                    else:
-                        self.order3_pending.append(Order3Pending(
-                            is_buy=t.is_buy, entry=t.entry,
-                            ses_range=t.ses_range, ses_name=t.ses_name,
-                            origin_ts=candle.ts, orig_entry=t.orig_entry))
-
-                # Order-2 SL → check deferred, arm Order-3
-                if t.is_order2 and closed_loss and self.s.use_order3:
-                    j = len(self.deferred_order3) - 1
-                    while j >= 0:
-                        d = self.deferred_order3[j]
-                        if (d.is_buy == t.is_buy and
-                                d.ses_name == t.ses_name and
-                                d.orig_entry == t.orig_entry):
-                            self.order3_pending.append(Order3Pending(
-                                is_buy=d.is_buy, entry=d.entry,
-                                ses_range=d.ses_range, ses_name=d.ses_name,
-                                origin_ts=candle.ts, orig_entry=d.orig_entry))
-                            self.deferred_order3.pop(j)
-                            break
-                        j -= 1
-
-                # Cancel linked Order-2 pending if Order-1 closed
-                if not t.is_order3 and not t.is_order2:
-                    self.order2_pending = [
-                        ap for ap in self.order2_pending
-                        if not (ap.origin_ts == t.origin_ts and
-                                ap.ses_name == t.ses_name and
-                                ap.is_buy == t.is_buy)]
+                # Order-1 SL loss → arm Order-3 immediately
+                if (self.s.use_order3 and not t.is_order3 and
+                        closed_loss and not is_trail_stop):
+                    self.order3_pending.append(Order3Pending(
+                        is_buy=t.is_buy, entry=t.entry,
+                        ses_range=t.ses_range, ses_name=t.ses_name,
+                        origin_ts=candle.ts, orig_entry=t.orig_entry))
 
                 self.trades.pop(i)
 
@@ -779,8 +557,6 @@ class StrategyEngine:
             "plans": [asdict(p) for p in self.plans],
             "trades": [asdict(t) for t in self.trades],
             "order3_pending": [asdict(s) for s in self.order3_pending],
-            "order2_pending": [asdict(a) for a in self.order2_pending],
-            "deferred_order3": [asdict(d) for d in self.deferred_order3],
             "sessions_rt": [asdict(s) for s in self.sessions_rt],
             "oco_counter": self._oco_counter,
             "plan_counter": self._plan_counter,
@@ -792,8 +568,6 @@ class StrategyEngine:
         self.plans = [Plan(**p) for p in data.get("plans", [])]
         self.trades = [OpenTrade(**t) for t in data.get("trades", [])]
         self.order3_pending = [Order3Pending(**s) for s in data.get("order3_pending", [])]
-        self.order2_pending = [Order2Pending(**a) for a in data.get("order2_pending", [])]
-        self.deferred_order3 = [DeferredOrder3(**d) for d in data.get("deferred_order3", [])]
         for sd in data.get("sessions_rt", []):
             for srt in self.sessions_rt:
                 if srt.name == sd["name"]:

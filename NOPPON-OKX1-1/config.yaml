@@ -1,16 +1,7 @@
 strategy:
-  entry_mode: "Breakout"          # Breakout | Pullback | PBRebreak
-  pullback_range_pct: 20.0
   plan_expire_hours: 0            # 0 = cancel at next session start
 
   close_main_on_new_ses: true
-
-  # Order-2 (50% pullback)
-  use_order2: true
-  order2_tp_mode: "RR"            # MainCost | RR
-  order2_rr: 5.0
-  order2_main_be: false
-  order2_keep_open: false
 
   # Order-3 (re-break rescue)
   use_order3: true
@@ -50,12 +41,7 @@ strategy:
   tz_offset_hours: 0
 
   # Risk Management
-  one_r_basis: "SL%"              # SL% | Distance | ATR
   one_r_pct_val: 55.0
-  one_r_dist_fix: 5.0
-  one_r_atr_period: 14
-  one_r_atr_mult: 1.5
-  sl_edge_mode: false
   rr_ratio: 5.0
   rr_base_mode: "SLDistance"      # 1RBasis | SLDistance
   risk_amount: 500.0

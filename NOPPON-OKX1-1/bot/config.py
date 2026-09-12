@@ -27,18 +27,9 @@ class SessionDef:
 @dataclass
 class StrategyConfig:
     # --- Entry Strategy ---
-    entry_mode: str = "Breakout"    # "Breakout" | "Pullback" | "PBRebreak"
-    pullback_range_pct: float = 20.0
     plan_expire_hours: float = 0.0  # 0 = cancel at next session start
 
     close_main_on_new_ses: bool = True
-
-    # --- Order-2 (50% pullback) ---
-    use_order2: bool = True
-    order2_tp_mode: str = "RR"     # "MainCost" | "RR"
-    order2_rr: float = 5.0
-    order2_main_be: bool = False
-    order2_keep_open: bool = False
 
     # --- Order-3 (re-break rescue) ---
     use_order3: bool = True
@@ -63,12 +54,7 @@ class StrategyConfig:
     tz_offset_hours: int = 0
 
     # --- Risk Management ---
-    one_r_basis: str = "SL%"       # "SL%" | "Distance" | "ATR"
     one_r_pct_val: float = 55.0
-    one_r_dist_fix: float = 5.0
-    one_r_atr_period: int = 14
-    one_r_atr_mult: float = 1.5
-    sl_edge_mode: bool = False
     rr_ratio: float = 5.0
     rr_base_mode: str = "SLDistance"  # "1RBasis" | "SLDistance"
     risk_amount: float = 500.0
@@ -81,8 +67,6 @@ class StrategyConfig:
     trail_lock_r: float = 1.0
 
     def validate(self) -> None:
-        assert self.entry_mode in ("Breakout", "Pullback", "PBRebreak")
-        assert self.one_r_basis in ("SL%", "Distance", "ATR")
         assert self.rr_base_mode in ("1RBasis", "SLDistance")
         for k in ("sun", "mon", "tue", "wed", "thu", "fri", "sat"):
             assert k in self.trade_days, f"trade_days missing '{k}'"
