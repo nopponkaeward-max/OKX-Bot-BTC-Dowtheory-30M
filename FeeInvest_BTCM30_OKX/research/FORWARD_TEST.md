@@ -289,3 +289,12 @@ the historical cache rather than only the last 299 bars.
   broken after 20 days — a violent BTC spike from ~77k to ~79.3k in a
   single 30m bar triggered the exhaustion fade, which then reversed
   ~1,950 pts within 2 hours. Textbook climax exhaustion.
+
+## Check #31 — 2026-09-12 00:2x UTC
+
+- Data: last 299 confirmed 30m bars (2026-09-05 → 2026-09-12), OKX API.
+- Price ~77,236 (down from check #30's 77,500; BTC drifting lower after
+  yesterday's volatility spike).
+- Open trades to resolve: none (check #30's SHORT already resolved as WIN).
+- New signals: **none** (only the already-resolved 13:30 signal in window).
+- Running tally: **1W / 0L** (+1,821.7 pts).
